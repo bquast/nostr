@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#070914">
+<title>How Nostr works</title>
+<style>
+/*
+VOICE: a calm night-time film you can scrub, precise like a lab bench
+IDEA: a model network on a dark table, with signed notes travelling as light
+PICTURE: full-screen three.js film of one note, from a random key to followers' phones
+COLOUR and TYPE: ink ground; violet events, mint checks, cyan requests, coral failures; Space Grotesk, Inter, JetBrains Mono
+LAYOUT: stage fills the first screen; title top left, panels right, caption and rail at the bottom; notes below
+*/
+@font-face{font-family:"Inter";src:url(inter.woff2) format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"Space Grotesk";src:url(space-grotesk.woff2) format("woff2");font-weight:300 700;font-display:swap}
+@font-face{font-family:"JetBrains Mono";src:url(jetbrains-mono.woff2) format("woff2");font-weight:100 800;font-display:swap}
+:root{color-scheme:dark;--bg:#070914;--ink:#e8eaf7;--dim:#9ba1c0;--faint:#5f6688;--line:rgba(160,170,235,.15);--glass:rgba(11,14,30,.74);--ev:#b58cff;--ok:#5ef2c4;--req:#5ac8ff;--no:#ff5d73;--list:#ffc45a;--bad:#ff8b3d;--reply:#ff7ac8;--eose:#8a9cff;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;--head:"Space Grotesk",Inter,system-ui,sans-serif}
+:root[data-theme=light],:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{font:16px/1.55 Inter,system-ui,sans-serif;overflow-x:clip;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+b,strong{font-weight:650}
+code,.mono{font-family:var(--mono);font-size:.86em;overflow-wrap:anywhere}
+
+.film{position:relative}
+.stage{position:relative;height:100svh;min-height:600px;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%,#11163a 0%,#070914 60%)}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#gl:active{cursor:grabbing}
+.ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.lbl{position:absolute;left:0;top:0;transform:translate(-50%,-100%);white-space:nowrap;text-align:center;font-size:13px;line-height:1.25;padding:5px 9px;border-radius:9px;background:rgba(8,10,24,.66);border:1px solid var(--line);backdrop-filter:blur(6px);transition:opacity .25s}
+.lbl b{display:block;font-weight:600;font-size:13px}
+.lbl span{color:var(--dim);font-size:12px}
+.lbl.wb{background:none;border:0;backdrop-filter:none;transform:translate(-50%,0)}
+.lbl.wb b{font-family:var(--head);font-size:15px}
+.lbl.wb span{font-family:var(--mono);font-size:12px}
+.badge{position:absolute;left:0;top:0;opacity:0;transform:translate(-50%,-100%);white-space:nowrap;font-size:13px;font-weight:600;padding:4px 10px;border-radius:99px;background:rgba(8,10,24,.8);border:1px solid currentColor}
+.badge.ok{color:var(--ok)}.badge.no{color:var(--no)}.badge.spin{color:var(--req)}.badge.info{color:var(--list)}
+.hidelbl .lbl:not(.wb){display:none}
+@media(min-width:901px){.noside .side{display:none}.noside .hero,.noside .caption{max-width:560px}}
+
+.hero{position:absolute;top:22px;left:26px;max-width:min(540px,calc(100% - 430px));pointer-events:none}
+.hero h1{font:600 clamp(26px,3.2vw,42px)/1.05 var(--head);margin:0 0 10px;text-wrap:balance;letter-spacing:-.01em}
+.hero h1 b{font-weight:700;color:#fff}
+.hero p{margin:0;color:var(--dim);max-width:46ch;font-size:15px}
+.chap{margin-top:12px;font:500 15px var(--head);color:var(--dim)}
+.chap b{color:var(--ink);font-size:20px}
+
+#bigPlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 30px 16px 26px;border-radius:99px;border:1px solid rgba(181,140,255,.6);background:rgba(20,16,44,.78);font:600 18px var(--head);cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 0 60px rgba(181,140,255,.35);display:flex;gap:12px;align-items:center}
+#bigPlay svg{width:18px;height:18px}
+#bigPlay.gone{display:none}
+
+.caption{position:absolute;left:22px;bottom:84px;max-width:min(560px,calc(100% - 420px));padding:16px 18px 14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(10px)}
+.caption .ct{display:flex;gap:10px;align-items:baseline}
+.caption .ct span{font:600 14px var(--head);color:var(--ev)}
+.caption h2{margin:0;font:600 21px/1.15 var(--head)}
+.caption p{margin:7px 0 0;font-size:15.5px;line-height:1.5}
+.caption .real{color:var(--dim);font-size:13.5px;margin-top:8px}
+.caption .real:empty{display:none}
+
+.bar{position:absolute;left:12px;right:12px;bottom:12px;min-height:58px;display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:14px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(10px)}
+.btn{min-width:44px;height:44px;padding:0 12px;border-radius:10px;border:1px solid transparent;background:transparent;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:14px;white-space:nowrap}
+.btn:hover{background:rgba(255,255,255,.06)}
+.btn[aria-pressed=true]{background:rgba(181,140,255,.16);border-color:rgba(181,140,255,.4)}
+.btn svg{width:18px;height:18px;flex:none}
+.seg{display:inline-flex;border-radius:10px;border:1px solid var(--line);overflow:hidden}
+.seg button{height:42px;min-width:40px;padding:0 10px;border:0;background:transparent;cursor:pointer;font-size:14px;color:var(--dim)}
+.seg button[aria-pressed=true]{background:rgba(181,140,255,.2);color:var(--ink)}
+.rail{flex:1;position:relative;height:44px;cursor:pointer;touch-action:none}
+.rail .segs{position:absolute;left:0;right:0;top:19px;height:6px;display:flex;gap:3px}
+.rail .segs i{display:block;height:100%;border-radius:3px;background:rgba(255,255,255,.12);position:relative;overflow:hidden}
+.rail .segs i b{position:absolute;inset:0;width:0;background:linear-gradient(90deg,#8a63ff,#c9a6ff)}
+.rail .segs i.on{background:rgba(255,255,255,.2)}
+.rail .knob{position:absolute;top:13px;width:18px;height:18px;margin-left:-9px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(181,140,255,.9);pointer-events:none}
+.rail .tip{position:absolute;bottom:40px;transform:translateX(-50%);padding:4px 9px;border-radius:8px;background:#141832;border:1px solid var(--line);font-size:13px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s}
+.rail:hover .tip{opacity:1}
+.readout{font:500 13px var(--mono);color:var(--dim);min-width:62px;text-align:right;white-space:nowrap}
+
+.side{position:absolute;top:16px;right:16px;bottom:84px;width:376px;display:flex;flex-direction:column;border-radius:14px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(10px);overflow:hidden;z-index:2}
+.tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.tabs button{flex:1;height:46px;border:0;background:transparent;cursor:pointer;font:600 14px var(--head);color:var(--dim);border-bottom:2px solid transparent}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ev)}
+.pane{flex:1;overflow:auto;padding:14px 16px 16px}
+.pane[hidden]{display:none}
+.json{font:13px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all;margin:0;padding:12px;border-radius:10px;background:rgba(0,0,0,.28);border:1px solid var(--line)}
+.json .k{color:#8f97bd}.json .s{color:#e2d4ff}.json .n{color:var(--list)}.json .p{color:var(--faint)}.json .h{color:var(--ok)}.json .g{color:var(--ev)}
+.field{margin-top:14px}
+.field label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+textarea,input[type=text]{width:100%;font:16px/1.45 Inter,sans-serif;color:var(--ink);background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;padding:10px 12px;resize:vertical}
+textarea{min-height:76px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pill{height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);cursor:pointer;font-size:14px}
+.pill:hover{background:rgba(255,255,255,.09)}
+.check{margin-top:12px;font-size:14px;color:var(--dim)}
+.check b{color:var(--ok)}
+.check b.bad{color:var(--no)}
+.wire{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.wire li{font:12.5px/1.45 var(--mono);padding:8px 10px;border-radius:9px;background:rgba(0,0,0,.25);border-left:3px solid var(--line);cursor:pointer}
+.wire li .w{display:flex;gap:6px;justify-content:space-between;color:var(--dim);font-family:Inter,sans-serif;font-size:12.5px;margin-bottom:3px}
+.wire li .m{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-all;color:#d8dbef}
+.wire li.open .m{display:block}
+.wire li.t-EVENT{border-left-color:var(--ev)}.wire li.t-OK{border-left-color:var(--ok)}.wire li.t-NO{border-left-color:var(--no)}.wire li.t-REQ{border-left-color:var(--req)}.wire li.t-EOSE{border-left-color:var(--eose)}.wire li.t-LIST{border-left-color:var(--list)}.wire li.t-BAD{border-left-color:var(--bad)}.wire li.t-FAIL{border-left-color:var(--no)}.wire li.t-LOCAL{border-left-color:var(--faint);font-family:Inter,sans-serif}
+.empty{color:var(--faint);font-size:14px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 12px;font-size:12.5px;color:var(--dim)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:0}
+
+.drawer{position:absolute;top:16px;right:16px;bottom:84px;width:400px;z-index:3;border-radius:14px;background:rgba(12,15,34,.94);border:1px solid rgba(181,140,255,.3);backdrop-filter:blur(12px);display:flex;flex-direction:column;transform:translateX(calc(100% + 30px));transition:transform .3s cubic-bezier(.2,.8,.2,1);visibility:hidden}
+.drawer.open{transform:none;visibility:visible}
+.drawer header{display:flex;align-items:center;justify-content:space-between;padding:8px 8px 8px 18px;border-bottom:1px solid var(--line)}
+.drawer h3{margin:0;font:600 17px var(--head)}
+.drawer .body{overflow:auto;padding:14px 18px 20px;font-size:15px}
+.drawer .body h4{font:600 15px var(--head);margin:18px 0 6px}
+.drawer .body p{margin:8px 0}
+.drawer .body ul{padding-left:18px;margin:8px 0}
+.drawer .body li{margin:4px 0}
+.drawer table{width:100%;border-collapse:collapse;font-size:13.5px}
+.drawer td{padding:6px 4px;border-top:1px solid var(--line);vertical-align:top}
+.drawer td:first-child{font-family:var(--mono);white-space:nowrap;color:var(--ev);padding-right:10px}
+.sw{padding:12px 0;border-top:1px solid var(--line)}
+.sw:first-child{border-top:0}
+.sw .q{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.sw .q b{font-weight:600}
+.sw .q kbd{font:12px var(--mono);color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+.sw p{margin:6px 0 10px;color:var(--dim);font-size:14px}
+.note{font-size:13px;color:var(--faint)}
+.bits{display:flex;height:10px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,.08);margin:8px 0}
+.bits b{background:var(--bad)}
+.out{font:13px/1.5 var(--mono);word-break:break-all;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.3);margin:6px 0}
+
+article{max-width:1240px;margin:0 auto;padding:clamp(36px,5vw,72px) max(5vw,18px) 40px}
+.intro{max-width:780px}
+.intro h2{font:600 clamp(28px,3vw,40px)/1.08 var(--head);margin:0 0 14px;text-wrap:balance}
+.intro p{font-size:17px;color:#cdd1e6;margin:0 0 12px;max-width:68ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:20px;margin-top:40px}
+.card{padding:22px 22px 18px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.01));border:1px solid var(--line)}
+.card h3{font:600 20px/1.2 var(--head);margin:0 0 10px}
+.card p,.card li{font-size:15.5px;color:#cdd1e6}
+.card ul{padding-left:18px;margin:8px 0}
+.card li{margin:5px 0}
+.wide{grid-column:1/-1}
+@media(min-width:1180px){.span2{grid-column:span 2}}
+table.t{width:100%;border-collapse:collapse;font-size:15px}
+table.t th{text-align:left;font-weight:600;color:var(--dim);font-size:13.5px;padding:8px 10px;border-bottom:1px solid var(--line)}
+table.t td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:#cdd1e6}
+table.t td:first-child{font-family:var(--mono);color:var(--ev);white-space:nowrap}
+kbd{font:13px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 7px;background:rgba(255,255,255,.04);white-space:nowrap}
+footer{max-width:1240px;margin:0 auto;padding:24px max(5vw,18px) 60px;color:var(--faint);font-size:14px;border-top:1px solid var(--line)}
+footer a,article a{color:var(--ev)}
+
+@media(max-width:900px){
+  .stage{height:92svh;min-height:620px}
+  .side{position:static;width:auto;margin:14px max(4vw,12px) 0;height:560px;bottom:auto}
+  .hero{max-width:calc(100% - 40px);top:16px;left:18px}
+  .hero p{display:none}
+  .caption{left:10px;right:10px;max-width:none;bottom:126px;padding:12px 14px}
+  .caption h2{font-size:18px}
+  .caption p{font-size:14.5px}
+  .bar{flex-wrap:wrap;gap:4px;padding:6px}
+  .rail{order:-1;flex:1 0 100%;height:36px}
+  .rail .segs{top:15px}.rail .knob{top:9px}
+  .opt{display:none}
+  .drawer{left:10px;right:10px;width:auto;top:auto;bottom:126px;max-height:62%;transform:translateY(calc(100% + 140px))}
+}
+@media(max-width:600px){.lbl span{display:none}.lbl{padding:3px 7px}.badge{font-size:12px}table.t{font-size:13px}.t thead{display:none}.t tr{display:grid;padding:8px 0;border-bottom:1px solid var(--line)}.t td{border:0;padding:2px 0}}
+@media(prefers-reduced-motion:reduce){.drawer{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<div class="film">
+<section class="stage" id="stage" aria-label="Interactive film: how a Nostr note travels">
+  <canvas id="gl"></canvas>
+  <div class="ov" id="ov"></div>
+  <header class="hero">
+    <h1>What happens when you <b>post a note on Nostr</b></h1>
+    <p>One note, from a random number to your followers' screens. The keys, hashes and signatures are real. Your browser makes them now.</p>
+    <div class="chap" aria-live="polite"><b id="chapNum">00</b> / <span id="chapTot">12</span></div>
+  </header>
+  <button id="bigPlay" type="button"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>Play the film</button>
+
+  <div class="caption" id="caption">
+    <div class="ct"><span id="capNum">00</span><h2 id="capTitle">Make a key</h2></div>
+    <p id="capText"></p>
+    <p class="real" id="capReal"></p>
+  </div>
+
+  <div class="drawer" id="deeper" role="dialog" aria-label="Go deeper">
+    <header><h3 id="deepTitle">Go deeper</h3><button class="btn" data-close="deeper" aria-label="Close">✕</button></header>
+    <div class="body" id="deepBody"></div>
+  </div>
+  <div class="drawer" id="whatif" role="dialog" aria-label="What if">
+    <header><h3>What if…</h3><button class="btn" data-close="whatif" aria-label="Close">✕</button></header>
+    <div class="body">
+      <div class="sw"><div class="q"><b>Relays you post to</b><kbd>1</kbd></div><p>More relays means more places where followers can find your note.</p><div class="seg" data-sw="write"><button data-v="1">1</button><button data-v="3">3</button><button data-v="4">4</button></div></div>
+      <div class="sw"><div class="q"><b>A relay blocks you</b><kbd>2</kbd></div><p>nos.lol refuses your posts. Every relay sets its own rules.</p><div class="seg" data-sw="block"><button data-v="0">No</button><button data-v="1">Yes</button></div></div>
+      <div class="sw"><div class="q"><b>A relay changes your note</b><kbd>3</kbd></div><p>relay.primal.net serves an edited copy to Bob.</p><div class="seg" data-sw="tamper"><button data-v="0">No</button><button data-v="1">Yes</button></div></div>
+      <div class="sw"><div class="q"><b>A relay is offline</b><kbd>4</kbd></div><p>relay.damus.io does not answer. Alice reads only that relay.</p><div class="seg" data-sw="down"><button data-v="0">No</button><button data-v="1">Yes</button></div></div>
+      <p class="note">The relay addresses are real public relays. The failures here are made up to show what happens.</p>
+    </div>
+  </div>
+
+  <nav class="bar" aria-label="Film controls">
+    <button class="btn" id="play" aria-label="Play or pause (Space)"><svg id="playIco" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+    <button class="btn opt" id="prev" aria-label="Previous chapter ([)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+    <button class="btn opt" id="next" aria-label="Next chapter (])"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+    <div class="rail" id="rail" role="slider" aria-label="Timeline" tabindex="0" aria-valuemin="0"><div class="segs" id="segs"></div><div class="knob" id="knob"></div><div class="tip" id="tip"></div></div>
+    <div class="seg opt" id="speed"><button data-v="0.5">½×</button><button data-v="1" aria-pressed="true">1×</button><button data-v="2">2×</button></div>
+    <span class="readout opt" id="readout">0.0 s</span>
+    <button class="btn" id="whatifBtn" aria-pressed="false">What if…</button>
+    <button class="btn" id="deeperBtn" aria-pressed="false">Go deeper</button>
+    <button class="btn opt" id="sideBtn" aria-pressed="true" aria-label="Show the event and wire panel" title="Panel">Panel</button>
+    <button class="btn opt" id="lblBtn" aria-pressed="true" aria-label="Labels (Shift+N)" title="Labels (Shift+N)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg></button>
+    <button class="btn opt" id="sndBtn" aria-pressed="false" aria-label="Sound (M)" title="Sound (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg></button>
+    <button class="btn" id="camBtn" aria-pressed="true" aria-label="Film camera (C)" title="Film camera (C). Drag the scene to look around."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3"/></svg></button>
+  </nav>
+</section>
+
+<aside class="side" id="side" aria-label="Live data">
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tabEv" aria-selected="true" aria-controls="paneEv">Your event</button>
+    <button role="tab" id="tabWire" aria-selected="false" aria-controls="paneWire">The wire <span id="wireCount" class="mono"></span></button>
+  </div>
+  <div class="pane" id="paneEv" role="tabpanel">
+    <pre class="json" id="evJson"></pre>
+    <div class="check" id="evCheck"></div>
+    <div class="field">
+      <label for="content">Write your own note. The page hashes and signs it again.</label>
+      <textarea id="content" maxlength="280" spellcheck="false"></textarea>
+    </div>
+    <div class="row">
+      <button class="pill" id="newKey" type="button">New key</button>
+      <button class="pill" id="copyEv" type="button">Copy event JSON</button>
+    </div>
+    <p class="note">Any Nostr library will accept this event as valid. The page does not send it anywhere.</p>
+  </div>
+  <div class="pane" id="paneWire" role="tabpanel" hidden>
+    <div class="legend"><span><i style="background:var(--ev)"></i>EVENT</span><span><i style="background:var(--ok)"></i>OK</span><span><i style="background:var(--req)"></i>REQ</span><span><i style="background:var(--eose)"></i>EOSE</span><span><i style="background:var(--list)"></i>relay list</span><span><i style="background:var(--no)"></i>refused / failed</span></div>
+    <ul class="wire" id="wire"></ul>
+    <p class="empty" id="wireEmpty">Nothing on the wire yet. Messages show here from chapter 05.</p>
+  </div>
+</aside>
+</div>
+
+<article>
+  <div class="intro">
+    <h2>Nostr is signed notes, passed around by simple servers</h2>
+    <p>Nostr ("Notes and Other Stuff Transmitted by Relays") is a protocol, not an app. Your account is a key pair. Everything you post is a small JSON object called an event, signed with that key. Relays are servers that store events and send them to anyone who asks. Clients do the rest: they sign, publish, ask, and check.</p>
+    <p>Because every event carries its own signature, no relay has to be trusted. A relay can refuse you, lose your data or change a copy. Your followers will notice the change and can ask a different relay. The film above follows one note through all of this.</p>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h3>The run</h3>
+      <p>Your browser makes a new private key, derives the public key, writes a kind 1 note, hashes it into an id and signs it. Your client sends it to your write relays, and it puts your relay list on an indexer. Three followers ask their own relays for your notes, check each signature, and use the outbox model when their relays do not have it. Two of them reply and react, and the relays push that back to you.</p>
+    </section>
+    <section class="card">
+      <h3>What's real</h3>
+      <ul>
+        <li>The private key, public key, <code>npub</code> and <code>nsec</code> (NIP-19 bech32).</li>
+        <li>The event, its serialization, the SHA-256 id and the BIP-340 Schnorr signature. The followers' replies and reactions are signed with their own keys.</li>
+        <li>Every check and cross on screen is a real verify call on that exact data.</li>
+        <li>The wire messages use the exact NIP-01 formats: <code>EVENT</code>, <code>OK</code>, <code>REQ</code>, <code>EOSE</code>.</li>
+        <li>Kinds and tags follow NIP-01, NIP-10, NIP-25 and NIP-65.</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>What's measured</h3>
+      <p>The page times the cryptography in your browser when it loads:</p>
+      <ul id="timings"><li>Measuring…</li></ul>
+      <p>Network times in the captions are typical values, not measurements.</p>
+    </section>
+    <section class="card">
+      <h3>What's drawn to illustrate</h3>
+      <ul>
+        <li>The curve is y² = x³ + 7 over integers mod 251, not mod the real 256-bit prime. The hops are a real double-and-add on that small curve.</li>
+        <li>Relays, phones and the hashing rings are props. A relay is a program on a server.</li>
+        <li>Messages are drawn as lights. Real ones are text frames on a WebSocket.</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>What's simplified</h3>
+      <ul>
+        <li>The film runs in story order. In real life, followers keep their subscriptions open before you post, so your note arrives tens of milliseconds after a relay stores it.</li>
+        <li>Clients use more than the outbox model to find people: relay hints in links (<code>nprofile</code>, <code>nevent</code>), NIP-05 names and caches.</li>
+        <li>Relays also enforce sizes, rate limits, payment and authentication (NIP-42). Only the signature check is shown.</li>
+        <li>The failures in "What if…" are made up. The relays named are real.</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>Common kinds</h3>
+      <table class="t">
+        <thead><tr><th>Kind</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Profile: name, picture, about</td></tr>
+          <tr><td>1</td><td>Short text note</td></tr>
+          <tr><td>3</td><td>Follow list</td></tr>
+          <tr><td>5</td><td>Deletion request</td></tr>
+          <tr><td>6</td><td>Repost</td></tr>
+          <tr><td>7</td><td>Reaction</td></tr>
+          <tr><td>9735</td><td>Zap receipt (Lightning payment)</td></tr>
+          <tr><td>10002</td><td>Relay list (NIP-65)</td></tr>
+          <tr><td>30023</td><td>Long-form article</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="card wide">
+      <h3>The messages</h3>
+      <table class="t">
+        <thead><tr><th>Message</th><th>Direction</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>["EVENT", event]</td><td>client → relay</td><td>Publish a signed event.</td></tr>
+          <tr><td>["REQ", sub_id, filter…]</td><td>client → relay</td><td>Start a subscription: send stored events that match, then new ones as they come.</td></tr>
+          <tr><td>["CLOSE", sub_id]</td><td>client → relay</td><td>Stop a subscription.</td></tr>
+          <tr><td>["EVENT", sub_id, event]</td><td>relay → client</td><td>An event that matches your subscription.</td></tr>
+          <tr><td>["OK", id, true|false, msg]</td><td>relay → client</td><td>The result of a publish. A refusal has a reason prefix such as <code>blocked:</code> or <code>invalid:</code>.</td></tr>
+          <tr><td>["EOSE", sub_id]</td><td>relay → client</td><td>End of stored events. Live events follow.</td></tr>
+          <tr><td>["CLOSED", sub_id, msg]</td><td>relay → client</td><td>The relay ended or refused a subscription.</td></tr>
+          <tr><td>["NOTICE", msg]</td><td>relay → client</td><td>A human-readable message.</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="card span2">
+      <h3>Controls</h3>
+      <ul>
+        <li>Play the film, or drag the rail to scrub. Click a part of the rail to jump to a chapter.</li>
+        <li>Drag the scene to look around, right-drag to pan, scroll to zoom. The camera button gives control back to the film.</li>
+        <li><b>What if…</b> changes the story: fewer relays, a ban, a forged copy, an outage. The film rebuilds at once.</li>
+        <li><b>Go deeper</b> explains the current chapter, with two small tools to try the hash and the signature.</li>
+        <li>Type your own note in <b>Your event</b>. <b>The wire</b> shows every message so far.</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>Keys</h3>
+      <table class="t">
+        <tbody>
+          <tr><td><kbd>Space</kbd></td><td>Play or pause</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Previous or next chapter</td></tr>
+          <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Back or forward 2 seconds</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Change a "What if" switch</td></tr>
+          <tr><td><kbd>D</kbd></td><td>Go deeper</td></tr>
+          <tr><td><kbd>C</kbd> / <kbd>R</kbd></td><td>Film camera / reset view</td></tr>
+          <tr><td><kbd>Shift</kbd>+<kbd>N</kbd></td><td>Labels</td></tr>
+          <tr><td><kbd>M</kbd></td><td>Sound</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</article>
+<footer>
+  <span id="libs">Made as one page with local copies of three.js, noble-curves, noble-hashes and scure-base (in <code>vendor.js</code>).</span> The format follows the interactive films at <a href="https://sael.net/prompt/">sael.net</a>. Protocol details: <a href="https://github.com/nostr-protocol/nips">github.com/nostr-protocol/nips</a>.
+</footer>
+</main>
+
+<script type="importmap">
+{"imports": {
+  "three": "./vendor.js",
+  "three/addons/controls/OrbitControls.js": "./vendor.js",
+  "three/addons/postprocessing/EffectComposer.js": "./vendor.js",
+  "three/addons/postprocessing/RenderPass.js": "./vendor.js",
+  "three/addons/postprocessing/UnrealBloomPass.js": "./vendor.js",
+  "three/addons/postprocessing/OutputPass.js": "./vendor.js",
+  "@noble/curves/secp256k1.js": "./vendor.js",
+  "@noble/hashes/sha2.js": "./vendor.js",
+  "@noble/hashes/utils.js": "./vendor.js",
+  "@scure/base": "./vendor.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bech32 } from '@scure/base';
+const V = { OrbitControls, EffectComposer, RenderPass, UnrealBloomPass, OutputPass, schnorr, sha256, bytesToHex, hexToBytes, utf8ToBytes, bech32 };
+
+/* ---------- small helpers ---------- */
+const $ = s => document.querySelector(s);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, u) => a + (b - a) * u;
+const smooth = u => { u = clamp(u); return u * u * (3 - 2 * u); };
+const ease = u => { u = clamp(u); return u < .5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; };
+const win = (t, a, b) => clamp((t - a) / (b - a));
+const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const mid = (h, n = 8) => h.length > 2 * n + 1 ? h.slice(0, n) + '…' + h.slice(-n) : h;
+const fmtMs = ms => ms < 0.1 ? (ms * 1000).toFixed(0) + ' µs' : ms < 10 ? ms.toFixed(2) + ' ms' : ms.toFixed(0) + ' ms';
+const host = u => u.replace('wss://', '');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- real cryptography ---------- */
+const hex = V.bytesToHex, unhex = V.hexToBytes;
+const sha = s => hex(V.sha256(V.utf8ToBytes(s)));
+const serialize = e => JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content]);
+const finalize = (e, sk) => {
+  const id = sha(serialize(e));
+  return { id, pubkey: e.pubkey, created_at: e.created_at, kind: e.kind, tags: e.tags, content: e.content, sig: hex(V.schnorr.sign(unhex(id), sk)) };
+};
+const verify = e => {
+  try {
+    return sha(serialize(e)) === e.id && V.schnorr.verify(unhex(e.sig), unhex(e.id), unhex(e.pubkey));
+  } catch (err) {
+    return false;
+  }
+};
+const makeKey = sk => {
+  const pk = hex(V.schnorr.getPublicKey(sk));
+  return { sk, pk, nsec: V.bech32.encode('nsec', V.bech32.toWords(sk)), npub: V.bech32.encode('npub', V.bech32.toWords(unhex(pk))) };
+};
+const newKey = () => makeKey(V.schnorr.utils.randomSecretKey());
+const seedKey = s => makeKey(V.sha256(V.utf8ToBytes(s)));
+const bitsOf = bytes => Array.from(bytes, b => Array.from({ length: 8 }, (_, i) => (b >> (7 - i)) & 1)).flat();
+
+const timeIt = (f, n = 24) => { f(); const a = performance.now(); for (let i = 0; i < n; i++) f(); return (performance.now() - a) / n; };
+const TIMING = (() => {
+  const k = newKey();
+  const e = finalize({ pubkey: k.pk, created_at: 1, kind: 1, tags: [], content: 'timing' }, k.sk);
+  return {
+    key: timeIt(() => V.schnorr.utils.randomSecretKey()),
+    pub: timeIt(() => V.schnorr.getPublicKey(k.sk)),
+    hash: timeIt(() => sha(serialize(e)), 200),
+    sign: timeIt(() => V.schnorr.sign(unhex(e.id), k.sk)),
+    verify: timeIt(() => V.schnorr.verify(unhex(e.sig), unhex(e.id), unhex(e.pubkey)))
+  };
+})();
+
+/* ---------- toy curve: y^2 = x^3 + 7 mod 251 (drawn, real arithmetic) ---------- */
+const TP = 251;
+const md = a => ((a % TP) + TP) % TP;
+const inv = a => {
+  let r0 = md(a), r1 = TP, s0 = 1, s1 = 0;
+  while (r1) { const q = Math.floor(r0 / r1); [r0, r1] = [r1, r0 - q * r1]; [s0, s1] = [s1, s0 - q * s1]; }
+  return md(s0);
+};
+const padd = (P, Q) => {
+  if (!P) return Q;
+  if (!Q) return P;
+  if (P[0] === Q[0] && md(P[1] + Q[1]) === 0) return null;
+  const l = P[0] === Q[0] ? md(3 * P[0] * P[0] * inv(2 * P[1])) : md((Q[1] - P[1]) * inv(Q[0] - P[0]));
+  const x = md(l * l - P[0] - Q[0]);
+  return [x, md(l * (P[0] - x) - P[1])];
+};
+const TOY_POINTS = (() => {
+  const out = [];
+  for (let x = 0; x < TP; x++) for (let y = 0; y < TP; y++) if (md(y * y - x * x * x - 7) === 0) out.push([x, y]);
+  return out;
+})();
+const TOY_G = TOY_POINTS.find(p => p[1] > 0 && p[0] > 2);
+const toyHops = k => {
+  const bits = k.toString(2).split('').map(Number);
+  let R = TOY_G;
+  const path = [R];
+  bits.slice(1).forEach(b => {
+    R = padd(R, R); if (R) path.push(R);
+    if (b) { R = padd(R, TOY_G); if (R) path.push(R); }
+  });
+  return path;
+};
+
+/* ---------- the cast ---------- */
+const NODE = {};
+const YOU = { id: 'you', name: 'You', pos: v3(-9.5, 0, 7), port: 2.35 };
+const RELAYS = [
+  { id: 'r0', url: 'wss://relay.damus.io', pos: v3(-8, 0, -4) },
+  { id: 'r1', url: 'wss://nos.lol', pos: v3(-3.6, 0, -8) },
+  { id: 'r2', url: 'wss://relay.primal.net', pos: v3(1.2, 0, -9.3) },
+  { id: 'r3', url: 'wss://offchain.pub', pos: v3(5.9, 0, -7.8) },
+  { id: 'r4', url: 'wss://purplepag.es', pos: v3(10.2, 0, -3.8), indexer: true }
+].map(r => ({ ...r, name: host(r.url), port: 3.4 }));
+const FOL = [
+  { id: 'alice', name: 'Alice', pos: v3(4.6, 0, 9.6), reads: ['r0'], color: '#ff7ac8', reply: 'Welcome to Nostr! Your note reached me.' },
+  { id: 'bob', name: 'Bob', pos: v3(9.2, 0, 8.4), reads: ['r1', 'r2'], color: '#5ac8ff', react: '🤙' },
+  { id: 'carol', name: 'Carol', pos: v3(13.2, 0, 5.4), reads: ['r3'], color: '#ffc45a', reply: 'Found you through your relay list.' }
+].map(f => ({ ...f, port: 2.75 }));
+[YOU, ...RELAYS, ...FOL].forEach(n => { NODE[n.id] = n; });
+const FKEY = Object.fromEntries(FOL.map(f => [f.id, seedKey(f.id + ' · nostr film demo key')]));
+const WRITE = { 1: ['r0'], 3: ['r0', 'r1', 'r2'], 4: ['r0', 'r1', 'r2', 'r3'] };
+const portOf = id => NODE[id].pos.clone().add(v3(0, NODE[id].port, 0));
+const COL = { ev: '#b58cff', ok: '#5ef2c4', no: '#ff5d73', req: '#5ac8ff', eose: '#8a9cff', list: '#ffc45a', bad: '#ff8b3d', reply: '#ff7ac8' };
+
+/* ---------- state ---------- */
+const state = {
+  key: newKey(),
+  content: 'Hello, Nostr! I signed this note in my browser.',
+  created: Math.floor(Date.now() / 1000),
+  s: { write: 3, block: 0, tamper: 0, down: 0 },
+  t: 0, playing: false, speed: 1, free: false, labels: true, sound: false, side: true
+};
+
+/* ---------- world (events) and script (timeline), both pure ---------- */
+function makeWorld(key, content, created, s) {
+  const W = WRITE[s.write];
+  const note = finalize({ pubkey: key.pk, created_at: created, kind: 1, tags: [], content }, key.sk);
+  const list = finalize({ pubkey: key.pk, created_at: created - 60, kind: 10002, tags: W.map(id => ['r', NODE[id].url]), content: '' }, key.sk);
+  const forged = { ...note, content: 'This text was changed by the relay.' };
+  const k = 40 + (key.sk[0] % 200);
+  return { key, note, list, forged, W, created, noteOk: verify(note), forgedOk: verify(forged), toyK: k, hops: toyHops(k) };
+}
+
+const CH = [
+  { title: 'Make a key', cap: () => 'There is no sign-up. Your client picks a random 256-bit number. That number is your private key, and it is your account.', real: () => `In real life: ${fmtMs(TIMING.key)} in your browser.` },
+  { title: 'Derive your public key', cap: () => 'Your client multiplies a fixed point on the secp256k1 curve by your private key. The result is your public key. This is easy one way and not possible to reverse. The public key is your name everywhere on Nostr.', real: () => `In real life: ${fmtMs(TIMING.pub)} in your browser.` },
+  { title: 'Write a note', cap: () => 'A post is an event: a small JSON object with your public key, the time, a kind (1 is a short note), tags and the text.', real: () => 'In real life: as long as it takes you to type.' },
+  { title: 'Hash it', cap: () => 'The client puts the fields into a fixed array and runs SHA-256 on it. The 32-byte result is the event id. If one character changes, the whole id changes.', real: () => `In real life: ${fmtMs(TIMING.hash)} in your browser.` },
+  { title: 'Sign it', cap: () => 'The client signs the id with your private key, as a BIP-340 Schnorr signature. Anyone with your public key can check it. Nobody without the private key can make one.', real: () => `In real life: ${fmtMs(TIMING.sign)} in your browser.` },
+  { title: 'Publish to relays', cap: x => `Relays are simple servers that keep events. Your client opens a WebSocket to each of your ${x.W.length === 1 ? 'one relay' : x.W.length + ' relays'} and sends ["EVENT", …]. It also puts your relay list (kind 10002) on an indexer relay.` + (x.s.down && x.W.includes('r0') ? ' relay.damus.io does not answer.' : ''), real: () => 'In real life: about 50 to 150 ms across the internet.' },
+  { title: 'Relays check and store', cap: x => 'Each relay checks the id and the signature, then applies its own rules. It answers ["OK", id, true], or false with a reason. Relays do not talk to each other.' + (x.s.block && x.W.includes('r1') ? ' nos.lol refuses you. That is its right, and the other relays keep your note.' : ''), real: () => `In real life: the check takes about ${fmtMs(TIMING.verify)}.` },
+  { title: 'Followers subscribe', cap: () => 'Each follower\'s client sends ["REQ", sub_id, filter] to the relays that follower uses. The filter says: events by these authors, kind 1.', real: () => 'In real life: clients keep these subscriptions open all the time.' },
+  { title: 'Relays answer', cap: x => 'Each relay sends the stored events that match, then ["EOSE"]: end of stored events. The subscription stays open for new events.' + (x.noneAt.length ? ` ${x.noneAt.join(' and ')} ${x.noneAt.length > 1 ? 'have' : 'has'} nothing from you, so ${x.noneAt.length > 1 ? 'they send' : 'it sends'} only EOSE.` : ''), real: () => 'In real life: tens of milliseconds after a relay stores the note.' },
+  { title: 'Clients check the signature', cap: x => 'Each client checks the signature itself, because it trusts no relay.' + (x.forgedTo.length ? ` ${x.forgedTo.join(' and ')} got a changed copy from relay.primal.net. The signature does not match the new text, so the client drops it.` : ' Every copy matches, so it goes into the feed.'), real: () => `In real life: ${fmtMs(TIMING.verify)} per event in your browser.` },
+  { title: 'Find the author\'s relays', cap: x => x.missing.length ? `${x.missingNames} did not find your note. ${x.missing.length > 1 ? 'Their clients read' : 'The client reads'} your relay list (kind 10002) from the indexer, then ${x.missing.length > 1 ? 'ask' : 'asks'} your relays directly. This is the outbox model.` + (x.stillMissing.length ? ` No working relay has a valid copy of your note, so ${x.stillMissingNames} still cannot see it. Try more relays in What if.` : '') : 'Everyone found your note on relays they already use. If a follower used other relays, the client would read your relay list (kind 10002) from an indexer and go to your relays. This is the outbox model.', real: () => 'In real life: a few hundred milliseconds, once per author. Clients keep relay lists in a cache.' },
+  { title: 'Replies come back', cap: x => x.replier ? 'A reply is an event too. Its tags point at your note ("e") and at you ("p"). Your client keeps a subscription for events that tag you, so the relay pushes the reply to you.' : 'Nobody could get your note, so nobody replies. Try more relays in What if.', real: () => 'In real life: the moment someone replies, over the open subscription.' },
+  { title: 'Nobody owns it', cap: () => 'Your identity is your key, not an account on a server. Relays can come and go, refuse you or change data. Your followers can still find your notes and check them.', real: () => '' }
+];
+
+function buildScript(w, s) {
+  const P = [], L = [], M = [], S = [];
+  const live = id => !(s.down && id === 'r0');
+  const accept = (id, ev) => live(id) && !(s.block && id === 'r1' && ev.pubkey === w.key.pk && ev.kind === 1) && !(NODE[id].indexer && ev.kind === 1);
+  const W = w.W;
+  const stored = W.filter(id => accept(id, w.note));
+  const serves = r => !live(r) ? 'down' : !stored.includes(r) ? 'none' : (s.tamper && r === 'r2') ? 'bad' : 'good';
+  const first = FOL.map(f => ({ f, got: f.reads.map(r => ({ r, res: serves(r) })) }));
+  const good = got => got.some(g => g.res === 'good');
+  const missing = first.filter(x => !good(x.got)).map(x => x.f);
+  const second = missing.map(f => ({ f, got: W.filter(r => !f.reads.includes(r)).map(r => ({ r, res: serves(r) })) }));
+  const holders = FOL.filter(f => good(first.find(x => x.f === f).got) || (second.find(x => x.f === f) && good(second.find(x => x.f === f).got)));
+  const stillMissing = FOL.filter(f => !holders.includes(f));
+  const D = [9, 9, 7, 8, 7.5, 7, 7.5, 6.5, 8, 7.5, missing.length ? 7.8 + (missing.length - 1) * 2.6 : 6.5, 10, 9];
+  const st = D.reduce((a, d, i) => (a.push(i ? a[i - 1] + D[i - 1] : 0), a), []);
+  const total = st[12] + D[12];
+  const pk = w.key.pk;
+  const feed = Object.fromEntries(FOL.map(f => [f.id, { goodAt: Infinity, bad: [] }]));
+  const you = { relays: {}, notes: [] };
+  const send = (a, b, t0, c, msg, opt = {}) => {
+    const dur = opt.dur || 1.6;
+    if (opt.fail) {
+      P.push({ a, b, t0, dur, c: COL.no, fail: true, size: opt.size || 1 });
+      L.push({ t: t0 + dur * .55, a, b, type: 'FAIL', text: `connection to ${NODE[b].name} failed` });
+      return t0 + dur * .55;
+    }
+    P.push({ a, b, t0, dur, c, size: opt.size || 1 });
+    L.push({ t: opt.logAt === 'end' ? t0 + dur : t0, a, b, type: opt.type || msg[0], msg });
+    return t0 + dur;
+  };
+  const verifyMark = (f, t, res) => {
+    const ok = res === 'good' ? w.noteOk : w.forgedOk;
+    M.push({ node: f.id, t0: t, t1: t + 2.4, cls: ok ? 'ok' : 'no', text: ok ? '✓ signature valid' : '✕ bad signature, dropped' });
+    L.push({ t, a: f.id, b: f.id, type: 'LOCAL', text: ok ? `${f.name}'s client: verify(${mid(w.note.id, 6)}) = true. Shown in feed.` : `${f.name}'s client: the copy has new text but the old sig. verify = false. Dropped.` });
+    if (ok) feed[f.id].goodAt = Math.min(feed[f.id].goodAt, t); else feed[f.id].bad.push(t);
+  };
+
+  // 05 publish
+  W.forEach((r, i) => {
+    const t0 = st[5] + 1.2 + i * .3;
+    you.relays[r] = { sendT: t0 };
+    const end = send('you', r, t0, COL.ev, ['EVENT', w.note], { fail: !live(r), dur: 1.7 });
+    if (!live(r)) you.relays[r].doneT = end, you.relays[r].res = 'offline';
+  });
+  const tl = st[5] + 1.6 + W.length * .3 + .8;
+  send('you', 'r4', tl, COL.list, ['EVENT', w.list], { dur: 1.8, size: .8, type: 'LIST' });
+
+  // 06 relays check and answer
+  [...W.filter(live).map(r => ({ r, ev: w.note })), { r: 'r4', ev: w.list }].forEach(({ r, ev }, i) => {
+    const t0 = st[6] + .5 + i * .3;
+    const ok = accept(r, ev);
+    const reason = ok ? '' : 'blocked: you are banned from posting here';
+    M.push({ node: r, t0, t1: t0 + 1.5, cls: 'spin', text: 'checking id and sig…' });
+    M.push({ node: r, t0: t0 + 1.5, t1: st[7] + 1.2, cls: ok ? 'ok' : 'no', text: ok ? '✓ stored' : '✕ refused' });
+    if (ok) S.push({ r, t: t0 + 1.5, c: ev.kind === 1 ? COL.ev : COL.list });
+    const end = send(r, 'you', t0 + 1.8, ok ? COL.ok : COL.no, ['OK', ev.id, ok, reason], { dur: 1.4, size: .7, logAt: 'end', type: ok ? 'OK' : 'NO' });
+    if (you.relays[r]) you.relays[r].doneT = end, you.relays[r].res = ok ? 'ok' : 'refused';
+  });
+
+  // 07 followers subscribe
+  first.forEach((x, k) => x.f.reads.forEach((r, j) => {
+    send(x.f.id, r, st[7] + .5 + k * .7 + j * .25, COL.req, ['REQ', 'feed-' + x.f.id, { authors: [pk], kinds: [1], limit: 20 }], { fail: !live(r), dur: 1.5, size: .8 });
+  }));
+
+  // 08 relays answer
+  first.forEach((x, k) => x.got.forEach((g, j) => {
+    if (g.res === 'down') return;
+    const t0 = st[8] + .4 + k * .8 + j * .3;
+    const sub = 'feed-' + x.f.id;
+    if (g.res !== 'none') send(g.r, x.f.id, t0, g.res === 'bad' ? COL.bad : COL.ev, ['EVENT', sub, g.res === 'bad' ? w.forged : w.note], { dur: 1.7, type: g.res === 'bad' ? 'BAD' : 'EVENT' });
+    send(g.r, x.f.id, t0 + 1.1, COL.eose, ['EOSE', sub], { dur: 1.5, size: .55 });
+  }));
+
+  // 09 clients verify
+  first.forEach((x, k) => {
+    const copies = x.got.filter(g => g.res === 'good' || g.res === 'bad');
+    copies.forEach((g, j) => verifyMark(x.f, st[9] + .7 + k * .9 + j * 1.1, g.res));
+    if (!copies.length) M.push({ node: x.f.id, t0: st[9] + .7 + k * .9, t1: st[10] + .8, cls: 'no', text: 'no note found' });
+  });
+
+  // 10 outbox
+  second.forEach((x, k) => {
+    const b = st[10] + .8 + k * 2.6;
+    const sub = 'relays-' + x.f.id;
+    send(x.f.id, 'r4', b, COL.req, ['REQ', sub, { kinds: [10002], authors: [pk] }], { dur: 1.3, size: .8 });
+    send('r4', x.f.id, b + 1.4, COL.list, ['EVENT', sub, w.list], { dur: 1.3, size: .8, type: 'LIST' });
+    M.push({ node: x.f.id, t0: b + 2.7, t1: b + 4.6, cls: 'info', text: `your relays: ${W.length}` });
+    x.got.forEach((g, j) => {
+      const t0 = b + 2.9 + j * .2;
+      send(x.f.id, g.r, t0, COL.req, ['REQ', 'out-' + x.f.id, { authors: [pk], kinds: [1] }], { fail: g.res === 'down', dur: 1.3, size: .8 });
+      if (g.res === 'good' || g.res === 'bad') {
+        send(g.r, x.f.id, t0 + 1.4, g.res === 'bad' ? COL.bad : COL.ev, ['EVENT', 'out-' + x.f.id, g.res === 'bad' ? w.forged : w.note], { dur: 1.3, type: g.res === 'bad' ? 'BAD' : 'EVENT' });
+        verifyMark(x.f, t0 + 2.8 + j * .15, g.res);
+      }
+    });
+    if (!good(x.got)) M.push({ node: x.f.id, t0: b + 4.7, t1: st[11] + 1, cls: 'no', text: 'still not found' });
+  });
+
+  // 11 replies
+  const inbox = stored;
+  let replier = null, reactor = null;
+  if (holders.length && inbox.length) {
+    const b = st[11];
+    inbox.forEach((r, i) => send('you', r, b + .4 + i * .2, COL.req, ['REQ', 'inbox', { '#p': [pk], since: w.created }], { dur: 1.3, size: .8 }));
+    const actors = holders.slice(0, 2);
+    actors.forEach((f, i) => {
+      const r = inbox[i % inbox.length];
+      const isReact = !!f.react;
+      const ev = finalize({
+        pubkey: FKEY[f.id].pk, created_at: w.created + 60 + i * 45, kind: isReact ? 7 : 1,
+        tags: isReact ? [['e', w.note.id], ['p', pk]] : [['e', w.note.id, NODE[r].url, 'root'], ['p', pk]],
+        content: isReact ? f.react : f.reply
+      }, FKEY[f.id].sk);
+      const t0 = b + 2.3 + i * 2.8;
+      const arr = send(f.id, r, t0, COL.reply, ['EVENT', ev], { dur: 1.5, size: .85 });
+      S.push({ r, t: arr + .2, c: COL.reply });
+      send(r, f.id, arr + .3, COL.ok, ['OK', ev.id, true, ''], { dur: 1.2, size: .6, logAt: 'end' });
+      const got = send(r, 'you', arr + .35, COL.reply, ['EVENT', 'inbox', ev], { dur: 1.7, size: .85 });
+      you.notes.push({ t: got, who: f.name, react: isReact, text: ev.content, ev });
+      if (isReact) reactor = ev; else replier = replier || ev;
+      if (!replier && !isReact) replier = ev;
+    });
+    replier = replier || reactor;
+  }
+
+  const names = a => a.length < 2 ? (a[0] || {}).name || '' : a.slice(0, -1).map(f => f.name).join(', ') + ' and ' + a[a.length - 1].name;
+  const facts = {
+    s, W,
+    noneAt: [...new Set(first.flatMap(x => x.got.filter(g => g.res === 'none').map(g => NODE[g.r].name)))],
+    forgedTo: first.filter(x => x.got.some(g => g.res === 'bad')).map(x => x.f.name),
+    missing, missingNames: names(missing), stillMissing, stillMissingNames: names(stillMissing),
+    replier
+  };
+  L.sort((a, b) => a.t - b.t);
+  return { D, st, total, P, L, M, S, feed, you, facts, stored, first, second, holders, replyEvents: you.notes.map(n => n.ev) };
+}
+
+let world = makeWorld(state.key, state.content, state.created, state.s);
+let script = buildScript(world, state.s);
+const chapterAt = t => { let i = 0; while (i < 12 && t >= script.st[i + 1]) i++; return i; };
+
+/* ---------- renderer ---------- */
+const stage = $('#stage'), canvas = $('#gl'), ov = $('#ov');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.05;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#070914');
+scene.fog = new THREE.FogExp2('#070914', .016);
+const camera = new THREE.PerspectiveCamera(42, 1, .1, 400);
+const controls = new V.OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = .08;
+controls.maxPolarAngle = Math.PI * .49;
+controls.minDistance = 3;
+controls.maxDistance = 80;
+controls.addEventListener('start', () => setFree(true));
+const composer = new V.EffectComposer(renderer);
+composer.addPass(new V.RenderPass(scene, camera));
+const bloom = new V.UnrealBloomPass(new THREE.Vector2(512, 512), .9, .55, .88);
+composer.addPass(bloom);
+composer.addPass(new V.OutputPass());
+
+scene.add(new THREE.HemisphereLight('#9aa4ff', '#0b0d18', 1.1));
+const sun = new THREE.DirectionalLight('#e8e0ff', 1.8);
+sun.position.set(-12, 22, 14);
+scene.add(sun);
+const youLight = new THREE.PointLight('#a77dff', 40, 18, 2);
+youLight.position.set(-9.5, 4, 8);
+scene.add(youLight);
+
+/* ---------- textures ---------- */
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.18, 'rgba(255,255,255,.85)'); gr.addColorStop(.45, 'rgba(255,255,255,.22)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const hdr = (hexc, k) => new THREE.Color(hexc).multiplyScalar(k);
+const glowMat = (c, k = 2, o = 1) => new THREE.SpriteMaterial({ map: glowTex, color: hdr(c, k), transparent: true, opacity: o, depthWrite: false, blending: THREE.AdditiveBlending });
+const basic = (c, k = 1, extra = {}) => new THREE.MeshBasicMaterial({ color: hdr(c, k), ...extra });
+const metal = c => new THREE.MeshStandardMaterial({ color: c, metalness: .55, roughness: .38 });
+
+function textPlane(w, h, worldW) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, color: new THREE.Color(.92, .92, .92) });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldW * h / w), mat);
+  const o = { mesh, ctx: c.getContext('2d'), tex, key: '', w, h };
+  o.draw = (key, fn) => { if (key === o.key) return; o.key = key; o.ctx.clearRect(0, 0, w, h); fn(o.ctx, w, h); tex.needsUpdate = true; };
+  return o;
+}
+const rr = (g, x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); };
+const wrap = (g, text, maxW) => {
+  const words = text.split(/\s+/), lines = [];
+  let line = '';
+  words.forEach(wd => { const test = line ? line + ' ' + wd : wd; if (g.measureText(test).width > maxW && line) { lines.push(line); line = wd; } else line = test; });
+  if (line) lines.push(line);
+  return lines;
+};
+
+/* ---------- ground and dust ---------- */
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), new THREE.ShaderMaterial({
+  transparent: false,
+  uniforms: { bg: { value: new THREE.Color('#070914') } },
+  vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
+  fragmentShader: `uniform vec3 bg; varying vec3 vW;
+    float grid(vec2 p, float s){ vec2 q = p / s; vec2 g = abs(fract(q - 0.5) - 0.5) / fwidth(q); return 1.0 - min(min(g.x, g.y), 1.0); }
+    void main(){
+      vec2 p = vW.xz - vec2(2.0, 0.0);
+      float d = length(p);
+      float fade = 1.0 - smoothstep(10.0, 46.0, d);
+      vec3 c = mix(bg, vec3(0.055, 0.06, 0.12), fade);
+      c += vec3(0.28, 0.22, 0.6) * grid(p, 2.0) * 0.22 * fade;
+      c += vec3(0.4, 0.32, 0.9) * grid(p, 10.0) * 0.25 * fade;
+      gl_FragColor = vec4(c, 1.0);
+    }`
+}));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const dust = (() => {
+  const n = 700, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { pos[i * 3] = (Math.random() - .5) * 70; pos[i * 3 + 1] = Math.random() * 18; pos[i * 3 + 2] = (Math.random() - .5) * 50; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: .06, color: hdr('#9a8cff', 1.2), transparent: true, opacity: .55, depthWrite: false, blending: THREE.AdditiveBlending }));
+  scene.add(p); return p;
+})();
+
+/* ---------- nodes ---------- */
+function pedestal(r, color, h = .4) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.08, h, 6), metal('#161b30'));
+  body.position.y = h / 2;
+  const rim = new THREE.Mesh(new THREE.RingGeometry(r * .9, r * .98, 6, 1), basic(color, 2.2, { side: THREE.DoubleSide }));
+  rim.rotation.x = -Math.PI / 2; rim.rotation.z = Math.PI / 6 * 0; rim.position.y = h + .005;
+  const pool = new THREE.Sprite(glowMat(color, .5, .35));
+  pool.scale.set(r * 6, r * 6, 1); pool.position.y = .05;
+  g.add(body, rim, pool);
+  return g;
+}
+
+// You: pedestal + laptop
+const youG = pedestal(1.7, COL.ev);
+youG.position.copy(YOU.pos);
+const laptop = new THREE.Group();
+laptop.position.y = .4;
+const lBase = new THREE.Mesh(new THREE.BoxGeometry(2.5, .09, 1.7), metal('#232a44'));
+lBase.position.y = .05;
+const hinge = new THREE.Group(); hinge.position.set(0, .09, -.82); hinge.rotation.x = -.2;
+const lLid = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.62, .06), metal('#232a44'));
+lLid.position.y = .81;
+const youScreen = textPlane(640, 400, 2.36);
+youScreen.mesh.position.set(0, .81, .035);
+youScreen.mesh.material.color.setScalar(1.05);
+hinge.add(lLid, youScreen.mesh);
+laptop.add(lBase, hinge);
+youG.add(laptop);
+scene.add(youG);
+
+// Relays
+RELAYS.forEach(r => {
+  const g = pedestal(1.25, r.indexer ? COL.list : COL.ev);
+  g.position.copy(r.pos);
+  const band = r.indexer ? COL.list : '#8f7bff';
+  r.bands = [];
+  for (let i = 0; i < 3; i++) {
+    const blk = new THREE.Mesh(new THREE.BoxGeometry(1.5, .74, 1.5), metal('#1b2140'));
+    blk.position.y = .4 + .42 + i * .84;
+    const led = new THREE.Mesh(new THREE.BoxGeometry(1.53, .07, 1.53), basic(band, r.indexer ? 1.5 : 2.4));
+    led.position.y = blk.position.y + .08;
+    const dots = new THREE.Mesh(new THREE.BoxGeometry(1.0, .05, 1.535), basic(COL.ok, 1.6));
+    dots.position.y = blk.position.y - .17;
+    g.add(blk, led, dots);
+    r.bands.push(led, dots);
+  }
+  const crown = new THREE.Mesh(new THREE.TorusGeometry(1.0, .045, 8, 64), basic(band, 2.6));
+  crown.rotation.x = Math.PI / 2; crown.position.y = 3.25;
+  const crown2 = new THREE.Mesh(new THREE.TorusGeometry(.72, .03, 8, 48), basic(COL.req, 2));
+  crown2.rotation.x = Math.PI / 2; crown2.position.y = 3.25;
+  const ant = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .8, 6), metal('#3a4266'));
+  ant.position.y = 3.3;
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(.15, 16, 12), basic(COL.ok, 2.5));
+  lamp.position.y = 3.75;
+  const halo = new THREE.Sprite(glowMat(band, 1.2, .5)); halo.scale.set(3, 3, 1); halo.position.y = 3.25;
+  g.add(crown, crown2, ant, lamp, halo);
+  r.plates = Array.from({ length: 4 }, (_, k) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(.6, .07, .42), basic(COL.ev, 2));
+    p.position.set(1.35, .5 + k * .13, .55); p.visible = false; g.add(p); return p;
+  });
+  Object.assign(r, { g, crown, crown2, lamp, halo, bandCol: band });
+  scene.add(g);
+});
+
+// Followers
+FOL.forEach(f => {
+  const g = pedestal(1.0, f.color);
+  g.position.copy(f.pos);
+  const phone = new THREE.Group();
+  phone.position.y = .4 + .92;
+  const ph = new THREE.Mesh(new THREE.BoxGeometry(.98, 1.78, .08), metal('#222842'));
+  const scr = textPlane(300, 540, .88);
+  scr.mesh.position.z = .045;
+  phone.add(ph, scr.mesh);
+  g.add(phone);
+  phone.lookAt(v3(f.pos.x * .6, 1.32, 30).sub(f.pos));
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(.2, 20, 14), basic(f.color, 2.2));
+  orb.position.y = 2.6;
+  const halo = new THREE.Sprite(glowMat(f.color, 1, .55)); halo.scale.set(1.4, 1.4, 1); halo.position.y = 2.6;
+  g.add(orb, halo);
+  Object.assign(f, { g, scr });
+  scene.add(g);
+});
+
+/* ---------- arcs (connections) ---------- */
+const arcs = new Map();
+function arc(a, b) {
+  const key = a < b ? a + '|' + b : b + '|' + a;
+  if (arcs.has(key)) return arcs.get(key);
+  const [A, B] = key.split('|');
+  const pa = portOf(A), pb = portOf(B);
+  const m = pa.clone().add(pb).multiplyScalar(.5);
+  m.y += pa.distanceTo(pb) * .2 + 1.2;
+  const curve = new THREE.QuadraticBezierCurve3(pa, m, pb);
+  const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, .018, 5, false), new THREE.MeshBasicMaterial({ color: hdr('#8c7dff', 1.4), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  scene.add(mesh);
+  const o = { key, A, curve, mesh, first: Infinity, hot: 0 };
+  arcs.set(key, o);
+  return o;
+}
+const arcPoint = (a, b, u) => { const o = arc(a, b); return o.curve.getPoint(o.A === a ? u : 1 - u); };
+function wireArcs() {
+  arcs.forEach(o => { o.first = Infinity; });
+  script.P.forEach(p => { const o = arc(p.a, p.b); o.first = Math.min(o.first, p.t0); });
+}
+
+/* ---------- packets ---------- */
+const TRAIL = 7;
+const pool = Array.from({ length: 48 }, () => {
+  const sprites = Array.from({ length: TRAIL }, () => { const s = new THREE.Sprite(glowMat('#ffffff', 2.2)); s.visible = false; scene.add(s); return s; });
+  return { sprites };
+});
+
+/* ---------- workbench (crypto chapters) ---------- */
+const WB = v3(-9.5, 4.75, 7);
+function bitGrid(onCol) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 1 });
+  const im = new THREE.InstancedMesh(new THREE.BoxGeometry(.15, .15, .15), mat, 256);
+  const m4 = new THREE.Matrix4();
+  for (let i = 0; i < 256; i++) { m4.makeTranslation((i % 16 - 7.5) * .2, (7.5 - Math.floor(i / 16)) * .2, 0); im.setMatrixAt(i, m4); im.setColorAt(i, new THREE.Color(0, 0, 0)); }
+  g.add(im);
+  scene.add(g);
+  const on = hdr(onCol, 2.1), off = new THREE.Color('#1a1f3c');
+  let last = '';
+  return {
+    g, mat,
+    paint(key, bitFn) {
+      if (key === last) return; last = key;
+      for (let i = 0; i < 256; i++) im.setColorAt(i, bitFn(i) ? on : off);
+      im.instanceColor.needsUpdate = true;
+    }
+  };
+}
+const privGrid = bitGrid('#b58cff');
+const pubGrid = bitGrid('#5ac8ff');
+
+const toyG = new THREE.Group();
+scene.add(toyG);
+const toyXY = p => v3((p[0] / (TP - 1) - .5) * 3.4, (p[1] / (TP - 1) - .5) * 3.4, 0);
+const toyDots = (() => {
+  const pos = new Float32Array(TOY_POINTS.length * 3);
+  TOY_POINTS.forEach((p, i) => { const v = toyXY(p); pos.set([v.x, v.y, v.z], i * 3); });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.PointsMaterial({ size: .07, color: hdr('#8f84d8', 1.1), transparent: true, opacity: 1, depthWrite: false });
+  const pts = new THREE.Points(g, m); toyG.add(pts); return pts;
+})();
+const toyFrame = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(3.7, 3.7)), new THREE.LineBasicMaterial({ color: '#3a3f6e', transparent: true }));
+toyG.add(toyFrame);
+const hopLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 3), 3)), new THREE.LineBasicMaterial({ color: hdr('#ffc45a', 1.8), transparent: true }));
+toyG.add(hopLine);
+const hopDot = new THREE.Sprite(glowMat('#ffc45a', 2.6)); hopDot.scale.set(.32, .32, 1); toyG.add(hopDot);
+
+const card = textPlane(1024, 620, 4.3);
+const ribbon = textPlane(4096, 96, 1);
+ribbon.mesh.geometry = new THREE.PlaneGeometry(2.3, .27);
+ribbon.tex.wrapS = THREE.ClampToEdgeWrapping;
+const idPlane = textPlane(1024, 220, 3.6);
+const sigPlane = textPlane(1024, 320, 3.6);
+[card, ribbon, idPlane, sigPlane].forEach(o => scene.add(o.mesh));
+const mixer = new THREE.Group();
+[1.05, .84, .63].forEach((r, i) => {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(r, .035, 8, 72), basic(i === 1 ? COL.req : COL.ok, 1.7, { transparent: true }));
+  m.userData.ax = [v3(1, 0, 0), v3(0, 1, 0), v3(1, 1, 0).normalize()][i];
+  mixer.add(m);
+});
+const mixGlow = new THREE.Sprite(glowMat(COL.ok, 1.5, .8)); mixGlow.scale.set(2.4, 2.4, 1); mixer.add(mixGlow);
+scene.add(mixer);
+const seal = new THREE.Group();
+const sealRing = new THREE.Mesh(new THREE.TorusGeometry(.95, .05, 8, 72), basic(COL.ev, 1.8, { transparent: true }));
+seal.add(sealRing);
+for (let i = 0; i < 24; i++) {
+  const tk = new THREE.Mesh(new THREE.BoxGeometry(.05, .2, .05), basic(COL.ev, 2.2, { transparent: true }));
+  const a = i / 24 * Math.PI * 2; tk.position.set(Math.cos(a) * 1.18, Math.sin(a) * 1.18, 0); tk.rotation.z = a - Math.PI / 2;
+  seal.add(tk);
+}
+const sealGlow = new THREE.Sprite(glowMat(COL.ev, 1.6, .8)); sealGlow.scale.set(2.6, 2.6, 1); seal.add(sealGlow);
+scene.add(seal);
+const setOpacity = (obj, o) => {
+  obj.visible = o > .003;
+  obj.traverse(c => { if (c.material) { c.material.transparent = true; c.material.opacity = o * (c.userData.baseO ?? 1); } });
+};
+
+/* ---------- canvas drawings ---------- */
+const MONO = '"JetBrains Mono", ui-monospace, monospace';
+const SANS = 'Inter, system-ui, sans-serif';
+function drawCard(g, W, H, st) {
+  rr(g, 4, 4, W - 8, H - 8, 28); g.fillStyle = 'rgba(14,16,36,.94)'; g.fill();
+  g.lineWidth = 3; g.strokeStyle = st.signed ? 'rgba(94,242,196,.8)' : 'rgba(181,140,255,.6)'; g.stroke();
+  g.font = `600 30px ${SANS}`; g.fillStyle = '#9ba1c0';
+  g.fillText(st.signed ? 'event · signed' : 'event', 40, 62);
+  g.font = `500 31px ${MONO}`;
+  const rows = [
+    ['id', st.id ? `"${mid(st.id, 9)}"` : '…', st.id ? '#5ef2c4' : '#4c5276'],
+    ['pubkey', `"${mid(st.pk, 9)}"`, '#e2d4ff'],
+    ['created_at', String(st.created), '#ffc45a'],
+    ['kind', '1', '#ffc45a'],
+    ['tags', '[]', '#e2d4ff'],
+    ['content', null, '#ffffff'],
+    ['sig', st.sig ? `"${mid(st.sig, 9)}"` : '…', st.sig ? '#b58cff' : '#4c5276']
+  ];
+  let y = 122;
+  rows.forEach(([k, v, c]) => {
+    g.fillStyle = '#7f86ad'; g.fillText(`"${k}":`, 40, y);
+    g.fillStyle = c;
+    if (k === 'content') {
+      const lines = wrap(g, '"' + st.text + (st.cursor ? '▍' : '') + '"', W - 330).slice(0, 2);
+      lines.forEach((ln, i) => g.fillText(ln, 290, y + i * 42));
+      y += 42 * Math.max(1, lines.length) + 22;
+    } else {
+      g.fillText(v, 290, y);
+      y += 62;
+    }
+  });
+}
+function drawHex(g, W, H, label, val, cols, color, reveal) {
+  g.font = `600 28px ${SANS}`; g.fillStyle = '#9ba1c0'; g.fillText(label, 8, 32);
+  g.font = `500 37px ${MONO}`;
+  const n = Math.floor(val.length * reveal);
+  for (let r = 0; r * cols < val.length; r++) {
+    const s = val.slice(r * cols, r * cols + cols);
+    const shown = s.split('').map((ch, i) => r * cols + i < n ? ch : '·').join('');
+    g.fillStyle = color; g.fillText(shown, 8, 84 + r * 52);
+  }
+}
+function drawYou(g, W, H, v) {
+  g.fillStyle = '#0c0f22'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#151a36'; g.fillRect(0, 0, W, 50);
+  g.font = `600 22px ${SANS}`; g.fillStyle = '#b58cff'; g.fillText('nostr client', 22, 33);
+  g.font = `500 18px ${MONO}`; g.fillStyle = '#7f86ad'; g.textAlign = 'right'; g.fillText(v.npub ? mid(v.npub, 8) : 'no key yet', W - 22, 32); g.textAlign = 'left';
+  if (v.phase === 'key') {
+    g.font = `600 30px ${SANS}`; g.fillStyle = '#e8eaf7'; g.fillText(v.npub ? 'Your key is ready' : 'Making your key…', 32, 140);
+    g.font = `400 21px ${SANS}`; g.fillStyle = '#9ba1c0';
+    wrap(g, v.npub ? 'No email, no password, no server. This key is the account.' : 'Picking 256 random bits from your browser.', W - 64).forEach((ln, i) => g.fillText(ln, 32, 186 + i * 30));
+    return;
+  }
+  rr(g, 22, 70, W - 44, 170, 16); g.fillStyle = '#141936'; g.fill(); g.strokeStyle = '#2b3160'; g.lineWidth = 2; g.stroke();
+  g.font = `400 24px ${SANS}`; g.fillStyle = '#e8eaf7';
+  wrap(g, v.text + (v.cursor ? '▍' : ''), W - 90).slice(0, 4).forEach((ln, i) => g.fillText(ln, 42, 110 + i * 34));
+  if (v.phase === 'compose') {
+    rr(g, W - 150, 254, 128, 46, 23); g.fillStyle = v.status ? '#3b2e6e' : '#7c55ff'; g.fill();
+    g.font = `600 20px ${SANS}`; g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(v.status || 'Post', W - 86, 284); g.textAlign = 'left';
+    return;
+  }
+  let y = 274;
+  g.font = `500 17px ${MONO}`;
+  v.relays.forEach(([name, st]) => {
+    const c = { ok: '#5ef2c4', refused: '#ff5d73', offline: '#ff5d73', sending: '#5ac8ff', waiting: '#5f6688' }[st];
+    g.fillStyle = c; g.beginPath(); g.arc(34, y - 6, 6, 0, 7); g.fill();
+    g.fillStyle = '#c9cde6'; g.fillText(name, 50, y);
+    g.fillStyle = c; g.textAlign = 'right'; g.fillText({ ok: 'OK', refused: 'refused', offline: 'offline', sending: 'sending…', waiting: '' }[st], W - 22, y); g.textAlign = 'left';
+    y += 28;
+  });
+  if (v.notes.length) {
+    g.fillStyle = 'rgba(12,15,34,.96)'; g.fillRect(0, H - 40 - v.notes.length * 34, W, 40 + v.notes.length * 34);
+    v.notes.forEach((n, i) => {
+      const yy = H - 22 - (v.notes.length - 1 - i) * 34;
+      g.font = `600 19px ${SANS}`; g.fillStyle = '#ff7ac8'; g.fillText(n.react ? `${n.who} reacted ${n.text}` : `${n.who} replied:`, 24, yy);
+      if (!n.react) { const w0 = g.measureText(`${n.who} replied: `).width; g.font = `400 19px ${SANS}`; g.fillStyle = '#e8eaf7'; g.fillText(n.text.length > 34 ? n.text.slice(0, 33) + '…' : n.text, 24 + w0, yy); }
+    });
+  }
+}
+function drawPhone(g, W, H, f, v) {
+  rr(g, 0, 0, W, H, 34); g.fillStyle = '#0c0f22'; g.fill();
+  g.font = `600 24px ${SANS}`; g.fillStyle = f.color; g.fillText(`${f.name}'s feed`, 22, 52);
+  let y = 78;
+  if (v.good) {
+    rr(g, 14, y, W - 28, 196, 18); g.fillStyle = '#17153a'; g.fill(); g.strokeStyle = 'rgba(181,140,255,.7)'; g.lineWidth = 2; g.stroke();
+    g.fillStyle = '#b58cff'; g.beginPath(); g.arc(42, y + 32, 14, 0, 7); g.fill();
+    g.font = `600 19px ${SANS}`; g.fillStyle = '#e8eaf7'; g.fillText('You', 64, y + 30);
+    g.font = `500 14px ${MONO}`; g.fillStyle = '#7f86ad'; g.fillText(mid(v.npub, 5), 64, y + 50);
+    g.font = `400 19px ${SANS}`; g.fillStyle = '#e8eaf7';
+    wrap(g, v.text, W - 60).slice(0, 4).forEach((ln, i) => g.fillText(ln, 30, y + 86 + i * 26));
+    g.font = `600 15px ${SANS}`; g.fillStyle = '#5ef2c4'; g.fillText('✓ signature checked', 30, y + 184);
+    y += 210;
+  }
+  if (v.bad) {
+    rr(g, 14, y, W - 28, 50, 14); g.fillStyle = 'rgba(255,93,115,.14)'; g.fill();
+    g.font = `600 16px ${SANS}`; g.fillStyle = '#ff5d73'; g.fillText(`✕ ${v.bad} forged copy dropped`, 28, y + 31);
+    y += 62;
+  }
+  for (let i = 0; i < 4 && y < H - 80; i++) {
+    rr(g, 14, y, W - 28, 90, 16); g.fillStyle = '#121530'; g.fill();
+    g.fillStyle = '#232847'; g.beginPath(); g.arc(40, y + 28, 12, 0, 7); g.fill();
+    rr(g, 62, y + 20, 110, 14, 7); g.fill(); rr(g, 28, y + 52, W - 70, 12, 6); g.fill(); rr(g, 28, y + 70, W - 140, 12, 6); g.fill();
+    y += 102;
+  }
+}
+
+/* ---------- overlay labels ---------- */
+const mkEl = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; ov.appendChild(d); return d; };
+const nodeLbl = [
+  [YOU, () => `<b>You</b><span>${esc(mid(state.key.npub, 7))}</span>`],
+  ...RELAYS.map(r => [r, () => `<b>${esc(r.name)}</b><span>${r.indexer ? 'indexer · relay lists' : 'relay'}</span>`]),
+  ...FOL.map(f => [f, () => `<b style="color:${f.color}">${f.name}</b><span>reads ${f.reads.map(id => NODE[id].name.split('.')[0] === 'relay' ? NODE[id].name.split('.')[1] : NODE[id].name.split('.')[0]).join(', ')}</span>`])
+].map(([n, html]) => ({ n, html, el: mkEl('lbl', html()) }));
+const wbLbl = {
+  priv: mkEl('lbl wb', ''), pub: mkEl('lbl wb', ''), toy: mkEl('lbl wb', ''), mix: mkEl('lbl wb', '<b>SHA-256</b>'), seal: mkEl('lbl wb', '<b>Schnorr sign</b><span>BIP-340</span>')
+};
+const refreshLabels = () => {
+  nodeLbl.forEach(o => { o.el.innerHTML = o.html(); });
+  wbLbl.priv.innerHTML = `<b>Private key · 256 random bits</b><span>${esc(mid(state.key.nsec, 10))}</span>`;
+  wbLbl.pub.innerHTML = `<b>Public key</b><span>${esc(mid(state.key.npub, 10))}</span>`;
+  wbLbl.toy.innerHTML = `<b>k × G on the curve</b><span>drawn small: y² = x³ + 7 mod 251</span>`;
+};
+let badgeEls = [];
+const buildBadges = () => { badgeEls.forEach(e => e.remove()); badgeEls = script.M.map(m => mkEl('badge ' + m.cls, esc(m.text))); };
+
+const tmpV = new THREE.Vector3();
+const place = (el, p, o = 1, dy = 0) => {
+  tmpV.copy(p).project(camera);
+  if (tmpV.z > 1 || o <= .01) { el.style.opacity = 0; return; }
+  const W = stage.clientWidth, H = stage.clientHeight;
+  el.style.opacity = o;
+  el.style.transform = `translate(${((tmpV.x + 1) / 2 * W).toFixed(1)}px, ${((1 - tmpV.y) / 2 * H + dy).toFixed(1)}px) translate(-50%, ${dy ? '0' : '-100%'})`;
+};
+
+/* ---------- camera film ---------- */
+const CAM = [
+  lt => ({ p: v3(-9.5 + Math.sin(lt * .15) * .6, 5.0, 16.8), l: v3(-9.5, 4.6, 7) }),
+  lt => ({ p: v3(-9.5 + Math.sin(lt * .12) * .8, 5.4, 21.5), l: v3(-9.5, 4.5, 7) }),
+  lt => ({ p: v3(-9.9 + lt * .05, 4.9, 16.8), l: v3(-9.5, 4.5, 7) }),
+  lt => ({ p: v3(-9.8 + Math.sin(lt * .1) * .5, 5.4, 21), l: v3(-9.8, 4.6, 7) }),
+  lt => ({ p: v3(-9.8 + Math.sin(lt * .1) * .5, 5.3, 20.6), l: v3(-9.8, 4.6, 7) }),
+  lt => ({ p: v3(-13 + lt * .25, 10.5, 23), l: v3(-2.5, 1.8, -1.5) }),
+  lt => ({ p: v3(-4.5 + lt * .2, 8.8, 12.5), l: v3(-1, 2.4, -6) }),
+  lt => ({ p: v3(7 - lt * .15, 13, 30), l: v3(3.4, 1.5, 0.5) }),
+  lt => ({ p: v3(4.5 - lt * .15, 12, 29), l: v3(3.6, 1.8, 0.5) }),
+  lt => ({ p: v3(9 + Math.sin(lt * .2), 6, 20.5), l: v3(9, 2, 6.5) }),
+  lt => ({ p: v3(7 + lt * .1, 12.5, 25), l: v3(6, 1.4, 0.5) }),
+  lt => ({ p: v3(-1 + lt * .2, 17, 33), l: v3(1.8, 1.2, 1) }),
+  lt => { const a = -.4 + lt * .07; return { p: v3(1.8 + Math.sin(a) * 33, 16 - lt * .3, 1 + Math.cos(a) * 33), l: v3(1.8, 1.5, 1) }; }
+];
+const camAt = t => {
+  const i = chapterAt(t), lt = t - script.st[i];
+  const cur = CAM[i](lt);
+  if (i === 0 || lt > 1.8) return cur;
+  const prev = CAM[i - 1](script.D[i - 1]);
+  const u = ease(lt / 1.8);
+  return { p: prev.p.lerp(cur.p, u), l: prev.l.lerp(cur.l, u) };
+};
+
+/* ---------- per-frame update ---------- */
+function stageObjects(t, clk) {
+  const st = script.st, i = chapterAt(t), lt = t - st[i];
+  const inC = (c, a = 0, b = 99) => i === c && lt >= a && lt <= b;
+  const L = (c, x) => (i === c ? lt >= x : i > c);
+
+  // private key grid
+  const privBits = bitsOf(state.key.sk);
+  let pp = WB.clone(), ps = 1, po = 0;
+  if (i === 0) { po = win(lt, .2, 1.2); }
+  else if (i === 1) { const u = ease(lt / 1.3); pp = WB.clone().add(v3(-4.6 * u, 0, 0)); ps = lerp(1, .78, u); po = 1; }
+  else if (i === 2) { pp.add(v3(-4.6, 0, 0)); ps = .78; po = 1 - win(lt, 0, .6); }
+  else if (i === 4) { const u = ease(win(lt, .7, 2)); pp = v3(-9.5, 2.6, 7).lerp(WB, u); ps = lerp(.42, .12, u); po = win(lt, .2, .6) * (1 - win(lt, 1.7, 2.1)); }
+  privGrid.g.position.copy(pp); privGrid.g.scale.setScalar(ps); setOpacity(privGrid.g, po);
+  if (po > 0) {
+    const flick = i === 0 && lt < 4.2;
+    const sweep = i === 0 ? Math.floor(win(lt, 4.2, 6) * 256) : 256;
+    const seed = Math.floor(lt * 14);
+    privGrid.paint(flick ? 'f' + seed : 's' + sweep, b => (b < sweep && !flick) ? privBits[b] : ((Math.imul(b + 1, 2654435761) ^ Math.imul(seed + 7, 40503)) >>> 13) & 1);
+  }
+  place(wbLbl.priv, pp.clone().add(v3(0, -1.75 * ps, 0)), po * (i < 2 ? 1 : 0) * win(i === 0 ? lt : 9, 5.6, 6.4), 1);
+
+  // public key grid
+  const pubBits = bitsOf(unhex(state.key.pk));
+  let qo = i === 1 ? win(lt, 5.4, 6) : i === 2 ? 1 - win(lt, 0, .6) : 0;
+  pubGrid.g.position.copy(WB).add(v3(4.6, 0, 0)); pubGrid.g.scale.setScalar(.78); setOpacity(pubGrid.g, qo);
+  if (qo > 0) { const sw = i === 1 ? Math.floor(win(lt, 5.5, 7.2) * 256) : 256; pubGrid.paint('p' + sw, b => b < sw && pubBits[b]); }
+  place(wbLbl.pub, WB.clone().add(v3(4.6, -1.4, 0)), qo * (i === 1 ? win(lt, 7, 7.6) : 0), 1);
+
+  // toy curve and hops
+  const to = i === 1 ? win(lt, .9, 1.8) : i === 2 ? 1 - win(lt, 0, .6) : 0;
+  toyG.position.copy(WB); setOpacity(toyG, to);
+  if (to > 0) {
+    const hops = world.hops;
+    const n = i === 1 ? Math.max(1, Math.ceil(win(lt, 1.9, 5.3) * hops.length)) : hops.length;
+    const arr = hopLine.geometry.attributes.position.array;
+    hops.slice(0, n).forEach((p, k) => { const v = toyXY(p); arr.set([v.x, v.y, .02], k * 3); });
+    hopLine.geometry.attributes.position.needsUpdate = true;
+    hopLine.geometry.setDrawRange(0, n);
+    hopDot.position.copy(toyXY(hops[n - 1])).setZ(.05);
+  }
+  place(wbLbl.toy, WB.clone().add(v3(0, -2.05, 0)), to, 1);
+
+  // event card
+  let co = 0, cp = WB.clone(), cs = 1;
+  if (i === 2) { co = win(lt, .2, .9); cs = lerp(.85, 1, smooth(lt / .9)); }
+  else if (i === 3 || i === 4) { const u = i === 3 ? ease(lt / 1.1) : 1; cp = WB.clone().add(v3(-4.4 * u, 0, 0)); cs = lerp(1, .74, u); co = 1; }
+  else if (i === 5) { const u = ease(lt / .9); cp = WB.clone().add(v3(-4.4, 0, 0)).lerp(v3(-9.5, 1.6, 7.2), u); cs = lerp(.74, .04, u); co = 1 - win(lt, .6, .9); }
+  card.mesh.position.copy(cp); card.mesh.scale.setScalar(cs); card.mesh.material.opacity = co; card.mesh.visible = co > 0;
+  const typed = i === 2 ? Math.floor(win(lt, 1, 5.4) * state.content.length) : state.content.length;
+  const hasId = L(3, 4.6), hasSig = L(4, 4.9);
+  if (co > 0) card.draw([typed, hasId, hasSig, world.note.id, state.key.pk, i === 2 && Math.floor(clk * 2.4) % 2].join('|'), (g, W, H) => drawCard(g, W, H, {
+    pk: state.key.pk, created: state.created, text: state.content.slice(0, typed), cursor: i === 2 && lt < 6 && Math.floor(clk * 2.4) % 2 === 0, id: hasId && world.note.id, sig: hasSig && world.note.sig, signed: hasSig
+  }));
+
+  // ribbon (serialization) into mixer
+  const ro = i === 3 ? Math.min(win(lt, .9, 1.3), 1 - win(lt, 3.6, 4)) : 0;
+  ribbon.mesh.visible = ro > 0; ribbon.mesh.material.opacity = ro;
+  ribbon.mesh.position.copy(WB).add(v3(-1.45, 0, .02));
+  ribbon.draw(world.note.id, (g, W, H) => {
+    let s = serialize(world.note); if (s.length > 160) s = s.slice(0, 159) + '…';
+    g.font = `500 40px ${MONO}`; g.fillStyle = '#ffd98a'; g.fillText(s, 12, 64);
+    ribbon.textW = (g.measureText(s).width + 24) / W;
+  });
+  const rep = 2.3 / (4096 * (.27 / 96));
+  ribbon.tex.repeat.x = rep;
+  ribbon.tex.offset.x = lerp(ribbon.textW || .5, -rep, win(lt, 1, 3.8));
+
+  // mixer
+  const mo = i === 3 ? win(lt, .3, .9) : i === 4 ? 1 - win(lt, 0, .6) : 0;
+  mixer.position.copy(WB); setOpacity(mixer, mo);
+  const spin = 0.6 + (i === 3 ? 7 * Math.min(win(lt, 1, 1.6), 1 - win(lt, 3.8, 4.6)) : 0);
+  mixer.children.forEach((m, k) => { if (m.userData.ax) m.setRotationFromAxisAngle(m.userData.ax, clk * spin * (1 + k * .3) + k); });
+  mixGlow.material.opacity = mo * (.12 + .3 * (spin - .6) / 7);
+  place(wbLbl.mix, WB.clone().add(v3(0, -1.45, 0)), mo * (i === 3 ? 1 : 0), 1);
+
+  // id plane
+  let io = 0, ip = WB.clone().add(v3(4.5, 0, 0)), is = 1;
+  if (i === 3) io = win(lt, 3.9, 4.4);
+  else if (i === 4) { const u = ease(win(lt, .7, 2)); ip.lerp(WB, u); is = lerp(1, .2, u); io = 1 - win(lt, 1.6, 2); }
+  idPlane.mesh.position.copy(ip); idPlane.mesh.scale.setScalar(is); idPlane.mesh.material.opacity = io; idPlane.mesh.visible = io > 0;
+  const idRev = i === 3 ? win(lt, 4, 6) : 1;
+  if (io > 0) idPlane.draw(world.note.id + idRev.toFixed(2), (g, W, H) => drawHex(g, W, H, 'id  ·  SHA-256 of the array', world.note.id, 32, '#5ef2c4', idRev));
+
+  // seal
+  const so = i === 4 ? Math.min(win(lt, .2, .7), 1 - win(lt, 6.3, 7.3)) : 0;
+  seal.position.copy(WB); setOpacity(seal, so);
+  seal.rotation.z = clk * (.4 + (i === 4 ? 4 * Math.min(win(lt, 1.6, 2.1), 1 - win(lt, 3.6, 4.4)) : 0));
+  sealGlow.material.opacity = so * .3;
+  place(wbLbl.seal, WB.clone().add(v3(0, -1.6, 0)), so, 1);
+
+  // sig plane
+  let sgo = i === 4 ? win(lt, 2.6, 3.1) : i === 5 ? 1 - win(lt, 0, .6) : 0;
+  sigPlane.mesh.position.copy(WB).add(v3(4.5, 0, 0)); sigPlane.mesh.material.opacity = sgo; sigPlane.mesh.visible = sgo > 0;
+  const sgRev = i === 4 ? win(lt, 2.7, 4.8) : 1;
+  if (sgo > 0) sigPlane.draw(world.note.sig + sgRev.toFixed(2), (g, W, H) => drawHex(g, W, H, 'sig  ·  64 bytes', world.note.sig, 32, '#c6a5ff', sgRev));
+}
+
+function netObjects(t, clk) {
+  const st = script.st;
+  // arcs
+  arcs.forEach(o => { o.hot = 0; });
+  // packets
+  const active = script.P.filter(p => t >= p.t0 && t <= p.t0 + p.dur * (p.fail ? .55 : 1) + (p.fail ? .5 : .02));
+  pool.forEach((slot, k) => {
+    const p = active[k];
+    if (!p) { slot.sprites.forEach(s => { s.visible = false; }); return; }
+    const o = arc(p.a, p.b); o.hot = Math.max(o.hot, 1);
+    const raw = (t - p.t0) / p.dur;
+    const stopAt = p.fail ? .55 : 1;
+    const u = Math.min(raw, stopAt);
+    const burst = p.fail ? clamp((raw * p.dur - stopAt * p.dur) / .5) : 0;
+    slot.sprites.forEach((s, j) => {
+      const uj = smooth(u) - j * .016;
+      if (uj < 0 || (burst > 0 && j > 0)) { s.visible = false; return; }
+      s.visible = true;
+      s.position.copy(arcPoint(p.a, p.b, uj));
+      const sc = .62 * p.size * (1 - j / (TRAIL + 1)) * (1 + burst * 2.5);
+      s.scale.set(sc, sc, 1);
+      s.material.color.copy(hdr(p.c, 2.4));
+      s.material.opacity = (1 - j / TRAIL) * (1 - burst);
+    });
+  });
+  arcs.forEach(o => {
+    const base = t >= o.first ? .16 : 0;
+    o.mesh.material.opacity = Math.max(base, o.hot * .5);
+    o.mesh.visible = o.mesh.material.opacity > 0;
+  });
+
+  // relays
+  const downNow = state.s.down && t >= st[5] + 1.2;
+  const ci = chapterAt(t), clt = t - st[ci];
+  RELAYS.forEach((r, k) => {
+    r.rise = ci < 5 ? 0 : ci === 5 ? ease(win(clt, .1 + k * .14, 1.1 + k * .14)) : 1;
+    r.g.scale.set(1, Math.max(.001, r.rise), 1); r.g.visible = r.rise > .005;
+    const isDown = downNow && r.id === 'r0';
+    const checking = script.M.some(m => m.node === r.id && m.cls === 'spin' && t >= m.t0 && t <= m.t1);
+    const recv = script.P.some(p => p.b === r.id && !p.fail && t >= p.t0 + p.dur && t <= p.t0 + p.dur + .45);
+    r.crown.rotation.z = clk * (checking ? 5 : .4);
+    r.crown2.rotation.z = -clk * (checking ? 7 : .6);
+    const lum = (isDown ? .12 : checking || recv ? 3.4 : 2.2) * (r.indexer ? .62 : 1);
+    r.crown.material.color.copy(hdr(r.bandCol, lum));
+    r.halo.material.opacity = (isDown ? .05 : checking || recv ? .9 : .4) * (r.indexer ? .5 : 1);
+    r.bands.forEach((b, j) => b.material.color.copy(hdr(j % 2 ? COL.ok : r.bandCol, isDown ? .1 : (j % 2 ? 1.2 + .8 * Math.sin(clk * 3 + j) : (r.indexer ? 1.4 : 2.2)))));
+    r.lamp.material.color.copy(isDown ? new THREE.Color('#2a2d40') : hdr(COL.ok, 2.4));
+    const items = script.S.filter(x => x.r === r.id && t >= x.t);
+    r.plates.forEach((p, j) => {
+      const it = items[j];
+      p.visible = !!it;
+      if (it) { p.material.color.copy(hdr(it.c, 2)); const pop = clamp((t - it.t) / .35); p.scale.setScalar(.4 + .6 * pop + .25 * Math.sin(pop * Math.PI)); }
+    });
+  });
+
+  // followers
+  FOL.forEach((f, k) => {
+    f.rise = ci < 7 ? 0 : ci === 7 ? ease(win(clt, k * .2, .9 + k * .2)) : 1;
+    f.g.scale.set(1, Math.max(.001, f.rise), 1); f.g.visible = f.rise > .005;
+    const fd = script.feed[f.id];
+    const v = { good: t >= fd.goodAt, bad: fd.bad.filter(x => t >= x).length };
+    f.scr.draw([v.good, v.bad, world.note.id].join('|'), (g, W, H) => drawPhone(g, W, H, f, { ...v, text: world.note.content, npub: state.key.npub }));
+  });
+
+  // your screen
+  const i = chapterAt(t), lt = t - st[i];
+  const typed = i < 2 ? 0 : i === 2 ? Math.floor(win(lt, 1, 5.4) * state.content.length) : state.content.length;
+  const phase = i < 2 ? 'key' : i < 5 || (i === 5 && lt < 1.1) ? 'compose' : 'sent';
+  const relays = world.W.map(r => {
+    const y = script.you.relays[r];
+    const s = !y || t < y.sendT ? 'waiting' : t < (y.doneT ?? Infinity) ? 'sending' : y.res;
+    return [NODE[r].name, s];
+  });
+  const notes = script.you.notes.filter(n => t >= n.t);
+  const status = i === 3 ? 'hashing…' : i === 4 ? 'signing…' : i === 5 ? 'sending…' : '';
+  const npubShown = i > 1 || (i === 1 && lt > 7);
+  youScreen.draw([phase, typed, relays.map(x => x[1]).join(), notes.length, status, npubShown, world.note.id, i === 2 && Math.floor(clk * 2.4) % 2].join('|'), (g, W, H) => drawYou(g, W, H, {
+    phase, npub: npubShown ? state.key.npub : '', text: state.content.slice(0, typed), cursor: i === 2 && Math.floor(clk * 2.4) % 2 === 0, status, relays, notes
+  }));
+}
+
+function overlays(t) {
+  const i = chapterAt(t);
+  nodeLbl.forEach(o => {
+    const op = i < 5 ? 0 : (o.n.rise ?? 1);
+    place(o.el, o.n.pos.clone().add(v3(0, o.n.id === 'you' ? 3.2 : o.n.port + .95, 0)), op);
+  });
+  const stack = {};
+  script.M.forEach((m, k) => {
+    const el = badgeEls[k];
+    const on = t >= m.t0 && t <= m.t1;
+    if (!on) { el.style.opacity = 0; return; }
+    const n = stack[m.node] = (stack[m.node] || 0) + 1;
+    const o = Math.min(clamp((t - m.t0) / .2), clamp((m.t1 - t) / .3));
+    place(el, NODE[m.node].pos.clone().add(v3(0, NODE[m.node].port + 1.9 + (n - 1) * .62, 0)), o);
+  });
+}
+
+/* ---------- UI ---------- */
+const ui = { chap: -1, wireN: -1, evStage: -1 };
+const segs = $('#segs'), knob = $('#knob'), tip = $('#tip'), rail = $('#rail');
+function buildRail() {
+  segs.innerHTML = script.D.map((d, i) => `<i style="flex:${d}" title="${esc(CH[i].title)}"><b></b></i>`).join('');
+  rail.setAttribute('aria-valuemax', script.total.toFixed(1));
+}
+function jsonHTML(e, stg) {
+  const str = v => `<span class="s">${esc(JSON.stringify(v))}</span>`;
+  const pend = '<span class="p">… not yet</span>';
+  const line = (k, v, last) => `  <span class="k">"${k}"</span>: ${v}${last ? '' : ','}`;
+  return ['{',
+    line('id', stg >= 3 ? `<span class="h">"${e.id}"</span>` : pend),
+    line('pubkey', `<span class="s">"${e.pubkey}"</span>`),
+    line('created_at', stg >= 1 ? `<span class="n">${e.created_at}</span>` : pend),
+    line('kind', stg >= 1 ? `<span class="n">1</span>` : pend),
+    line('tags', stg >= 1 ? '[]' : pend),
+    line('content', stg >= 1 ? str(e.content) : pend),
+    line('sig', stg >= 4 ? `<span class="g">"${e.sig}"</span>` : pend, true),
+    '}'].join('\n');
+}
+function wireItem(l) {
+  const who = n => n === 'you' ? 'you' : NODE[n].name;
+  const head = l.type === 'LOCAL' ? '' : `<div class="w"><span>${esc(who(l.a))} → ${esc(who(l.b))}</span><span>${l.t.toFixed(1)} s</span></div>`;
+  return `<li class="t-${l.type}" tabindex="0">${head}<div class="m">${esc(l.text || JSON.stringify(l.msg))}</div></li>`;
+}
+function updateUI(t) {
+  const i = chapterAt(t), lt = t - script.st[i];
+  if (i !== ui.chap) {
+    ui.chap = i;
+    const n = String(i).padStart(2, '0');
+    $('#chapNum').textContent = n; $('#capNum').textContent = n;
+    $('#capTitle').textContent = CH[i].title;
+    $('#capText').textContent = CH[i].cap(script.facts);
+    $('#capReal').textContent = CH[i].real();
+    segs.querySelectorAll('i').forEach((el, k) => el.classList.toggle('on', k === i));
+    if ($('#deeper').classList.contains('open')) renderDeep(i);
+    requestAnimationFrame(updateOffset);
+  }
+  const u = t / script.total;
+  knob.style.left = (u * 100) + '%';
+  segs.querySelectorAll('i').forEach((el, k) => { el.firstChild.style.width = (clamp((t - script.st[k]) / script.D[k]) * 100) + '%'; });
+  rail.setAttribute('aria-valuenow', t.toFixed(1));
+  $('#readout').textContent = t.toFixed(1) + ' s';
+  const stg = i < 2 ? 0 : (i === 2 ? (lt > 1 ? 1 : 0) : i === 3 ? (lt > 4.6 ? 3 : 1) : i === 4 ? (lt > 4.9 ? 4 : 3) : 4);
+  if (stg !== ui.evStage) {
+    ui.evStage = stg;
+    $('#evJson').innerHTML = jsonHTML(world.note, stg);
+    $('#evCheck').innerHTML = stg >= 4 ? `Signature check: <b class="${world.noteOk ? '' : 'bad'}">${world.noteOk ? '✓ valid' : '✕ invalid'}</b> · schnorr.verify(sig, id, pubkey) in ${fmtMs(TIMING.verify)}` : 'The id and signature appear as the film reaches them.';
+  }
+  const shown = script.L.filter(l => l.t <= t);
+  if (shown.length !== ui.wireN) {
+    ui.wireN = shown.length;
+    $('#wire').innerHTML = shown.slice(-60).reverse().map(wireItem).join('');
+    $('#wireEmpty').hidden = shown.length > 0;
+    $('#wireCount').textContent = shown.length ? `(${shown.length})` : '';
+  }
+}
+
+/* ---------- go deeper ---------- */
+const DEEP = [
+  () => `<p>Your private key is 32 random bytes from your browser's secure random generator. There are about 10<sup>77</sup> possible keys, so two people never pick the same one.</p>
+    <p>Clients show it as <code>nsec1…</code> (NIP-19, bech32) so you do not mix it up with the public key. Anyone who has your nsec <b>is</b> you. There is no password reset: if you lose it, the account is gone; if it leaks, you must move to a new key.</p>
+    <h4>This film's private key</h4><div class="out">${esc(state.key.nsec)}</div>
+    <p class="note">A throwaway key, made for this page. It never leaves your browser.</p>
+    <div class="row"><button class="pill" data-act="newkey">Make another key</button></div>`,
+  () => `<p>Nostr uses secp256k1, the same curve as Bitcoin. Your public key is <code>k · G</code>: a fixed start point G, added to itself k times, where k is your private key. Computers do this with about 256 doublings and additions, so it is fast. Going back from the point to k is the discrete logarithm problem, and nobody knows a practical way to do it.</p>
+    <p>Nostr keeps only the x-coordinate of the point (32 bytes, "x-only" keys from BIP-340). Clients show it as <code>npub1…</code>. Relays and events use the hex form.</p>
+    <h4>Your public key</h4><div class="out">${esc(state.key.npub)}</div><div class="out">${esc(state.key.pk)}</div>
+    <h4>About the drawing</h4><p>The dots are every point of y² = x³ + 7 over the integers mod 251 (${TOY_POINTS.length} points). The gold path is a real double-and-add of k = ${world.toyK} on that small curve, in ${world.hops.length - 1} steps. The real curve uses a prime near 2<sup>256</sup>, so a picture of it would look like noise.</p>`,
+  () => `<p>Everything on Nostr is an event with the same seven fields:</p>
+    <table><tr><td>id</td><td>SHA-256 of the serialized event (next chapter)</td></tr><tr><td>pubkey</td><td>Author's public key, 32 bytes hex</td></tr><tr><td>created_at</td><td>Unix time in seconds, set by the author</td></tr><tr><td>kind</td><td>What the event is: 0 profile, 1 note, 3 follows, 7 reaction…</td></tr><tr><td>tags</td><td>A list of lists, such as ["e", id] or ["p", pubkey]</td></tr><tr><td>content</td><td>Text. Its meaning depends on the kind.</td></tr><tr><td>sig</td><td>Schnorr signature of the id</td></tr></table>
+    <p>New features are new kinds and tags. A client ignores kinds it does not know, so the protocol can grow without breaking old clients.</p>`,
+  () => `<p>The id is SHA-256 of this exact JSON string, with no spaces: <code>[0, pubkey, created_at, kind, tags, content]</code>.</p>
+    <div class="out">${esc(serialize(world.note))}</div>
+    <h4>Try it: change one character</h4>
+    <input type="text" id="avA" value="${esc(state.content)}" spellcheck="false" aria-label="Text A">
+    <div class="out" id="avIdA"></div>
+    <input type="text" id="avB" value="${esc(state.content.slice(0, -1) + (state.content.slice(-1) === '!' ? '?' : '!'))}" spellcheck="false" aria-label="Text B">
+    <div class="out" id="avIdB"></div>
+    <div class="bits" id="avBar"></div><p id="avTxt"></p>`,
+  () => `<p>A BIP-340 Schnorr signature is 64 bytes: a point R (32 bytes) and a number s (32 bytes). To check it, a client computes <code>s·G</code> and compares it with <code>R + hash(R, pubkey, id)·P</code>. Only someone who knows the private key can make s fit.</p>
+    <p>The signature covers the id, and the id covers every field. So a signature proves who wrote the event <b>and</b> that nothing in it changed.</p>
+    <h4>Try it: edit the signed note</h4>
+    <input type="text" id="tmA" value="${esc(state.content)}" spellcheck="false" aria-label="Edited content">
+    <p id="tmOut"></p>
+    <p class="note">The page keeps the original id and signature and runs the real check on your edited text.</p>`,
+  () => `<p>Clients talk to relays over WebSockets with JSON arrays. The first item says what the message is.</p>
+    <table><tr><td>EVENT</td><td>Publish an event</td></tr><tr><td>REQ</td><td>Subscribe with filters</td></tr><tr><td>CLOSE</td><td>End a subscription</td></tr><tr><td>OK</td><td>Relay's answer to a publish</td></tr><tr><td>EOSE</td><td>End of stored events</td></tr><tr><td>CLOSED</td><td>Relay ended a subscription</td></tr><tr><td>NOTICE</td><td>Message for humans</td></tr></table>
+    <p>Your client sends the same signed event to every relay. A relay cannot tell whether it got the event from you or from another relay, and it does not need to.</p>
+    <h4>Your relay list (kind 10002)</h4><div class="out">${esc(JSON.stringify(world.list))}</div>`,
+  () => `<p>Relays check the event, then their own rules. Common rules: a size limit, a rate limit, paid membership, a proof of work (NIP-13), only some kinds (an indexer such as purplepag.es keeps profiles and relay lists), or login with your key (NIP-42). A relay describes its rules in a NIP-11 document.</p>
+    <p>A refusal is normal. The OK message gives a machine-readable prefix such as <code>blocked:</code>, <code>rate-limited:</code>, <code>invalid:</code>, <code>pow:</code> or <code>restricted:</code>.</p>
+    <p>No relay is the "home" of your account. Each one is a copy you chose.</p>`,
+  () => `<p>A filter is a JSON object. An event matches if it matches every field that is present. Several filters in one REQ are OR-ed.</p>
+    <table><tr><td>ids</td><td>Event ids</td></tr><tr><td>authors</td><td>Public keys</td></tr><tr><td>kinds</td><td>Kind numbers</td></tr><tr><td>#e, #p, #t…</td><td>Tag values, such as events that tag you</td></tr><tr><td>since, until</td><td>Time range</td></tr><tr><td>limit</td><td>How many stored events to send first</td></tr></table>
+    <h4>Alice's filter</h4><div class="out">${esc(JSON.stringify({ authors: [state.key.pk], kinds: [1], limit: 20 }))}</div>
+    <p>A real follower has hundreds of authors in one filter: the whole follow list (kind 3).</p>`,
+  () => `<p>A relay first sends stored events that match, newest first, up to the limit. Then it sends <code>["EOSE", sub_id]</code>. After EOSE, the subscription stays open, and the relay pushes every new matching event the moment it stores it. This is how notes appear live.</p>
+    <p>The client ends it with <code>["CLOSE", sub_id]</code>. The relay may end it with <code>["CLOSED", sub_id, reason]</code>.</p>`,
+  () => `<p>A relay can drop your note, delay it or send a changed copy. It cannot make a copy that passes the check, because it does not have your private key.</p>
+    <p>So clients check every event: compute the id from the fields, then verify the signature against the pubkey. In your browser that takes ${fmtMs(TIMING.verify)}.</p>
+    <h4>The changed copy</h4><div class="out">${esc(JSON.stringify(world.forged))}</div>
+    <p>verify → <b style="color:var(--no)">${world.forgedOk}</b>. The content changed, so the id no longer matches, and the signature no longer matches the content.</p>`,
+  () => `<p>The outbox model (NIP-65): every user publishes a kind 10002 list of the relays they write to and read from. To read someone, go to their write relays. To reach someone, write to their read relays.</p>
+    <p>Indexer relays such as purplepag.es keep these lists so clients can find them. Clients also get relay hints from links (<code>nprofile1…</code>, <code>nevent1…</code>) and from NIP-05 names.</p>
+    <div class="out">${esc(JSON.stringify(world.list))}</div>
+    <p>An "r" tag with no marker means read and write. A marker "read" or "write" limits it.</p>`,
+  () => {
+    const ev = script.replyEvents;
+    return `<p>A reply is a kind 1 event with an <code>e</code> tag for the note it answers and a <code>p</code> tag for its author (NIP-10). A reaction is kind 7 with the same tags (NIP-25). A zap is a Lightning payment with a signed receipt, kind 9735 (NIP-57).</p>
+    <p>Your client keeps a subscription like <code>{"#p":[your pubkey]}</code> open on your relays, so anything that tags you arrives at once.</p>
+    ${ev.length ? ev.map(e => `<h4>${e.kind === 7 ? 'Reaction' : 'Reply'}, signed by ${esc(FOL.find(f => FKEY[f.id].pk === e.pubkey).name)}'s key</h4><div class="out">${esc(JSON.stringify(e))}</div>`).join('') : '<p class="note">No replies in this run: nobody got the note.</p>'}`;
+  },
+  () => `<p>You can change relays at any time: publish a new relay list and copy your events. You keep your followers, because they follow a key, not a server.</p>
+    <h4>Keeping the key safe</h4><ul><li>A browser extension can sign for websites without showing them your key (NIP-07).</li><li>A remote signer keeps the key on another device and signs on request (NIP-46).</li><li>A NIP-05 name such as <code>you@example.com</code> maps a readable name to your key.</li></ul>
+    <h4>Limits</h4><ul><li>Deletion is a request (kind 5). Relays may keep the original.</li><li>Notes are public by default. Private messages are encrypted events (NIP-17, NIP-44), but who talks to whom can still show.</li><li>A lost or leaked key cannot be reset.</li></ul>`
+];
+function renderDeep(i) {
+  $('#deepTitle').textContent = `Go deeper · ${String(i).padStart(2, '0')} ${CH[i].title}`;
+  const body = $('#deepBody');
+  body.innerHTML = DEEP[i]();
+  const nk = body.querySelector('[data-act=newkey]');
+  if (nk) nk.addEventListener('click', regenKey);
+  if (i === 3) {
+    const run = () => {
+      const mk = c => sha(serialize({ ...world.note, content: c }));
+      const a = mk($('#avA').value), b = mk($('#avB').value);
+      $('#avIdA').textContent = a; $('#avIdB').textContent = b;
+      const ba = bitsOf(unhex(a)), bb = bitsOf(unhex(b));
+      const diff = ba.filter((x, k) => x !== bb[k]).length;
+      $('#avBar').innerHTML = `<b style="width:${diff / 2.56}%"></b>`;
+      $('#avTxt').textContent = `${diff} of 256 bits differ (${(diff / 2.56).toFixed(0)}%). A good hash changes about half the bits for any change.`;
+    };
+    ['#avA', '#avB'].forEach(s => $(s).addEventListener('input', run));
+    run();
+  }
+  if (i === 4) {
+    const run = () => {
+      const ok = verify({ ...world.note, content: $('#tmA').value });
+      $('#tmOut').innerHTML = ok ? '<b style="color:var(--ok)">✓ valid</b>: the text is exactly what you signed.' : '<b style="color:var(--no)">✕ invalid</b>: the text is not what was signed. Every client will reject this copy.';
+    };
+    $('#tmA').addEventListener('input', run);
+    run();
+  }
+}
+
+/* ---------- rebuild and controls ---------- */
+function rebuild(keepChapter = true) {
+  const i = chapterAt(state.t), f = (state.t - script.st[i]) / script.D[i];
+  world = makeWorld(state.key, state.content, state.created, state.s);
+  script = buildScript(world, state.s);
+  wireArcs(); buildBadges(); buildRail(); refreshLabels();
+  state.t = keepChapter ? script.st[i] + f * script.D[i] : 0;
+  ui.chap = -1; ui.wireN = -1; ui.evStage = -1;
+  card.key = ''; ribbon.key = ''; idPlane.key = ''; sigPlane.key = ''; youScreen.key = '';
+  FOL.forEach(fl => { fl.scr.key = ''; });
+}
+function regenKey() {
+  state.key = newKey();
+  rebuild(false);
+  play(true);
+}
+const setT = t => { state.t = clamp(t, 0, script.total); };
+const jump = i => { setT(script.st[clamp(i, 0, 12)] + .001); };
+const icoPlay = '<path d="M7 4.5v15l13-7.5z"/>', icoPause = '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>';
+function play(on) {
+  state.playing = on;
+  if (on && state.t >= script.total - .05) state.t = 0;
+  $('#playIco').innerHTML = on ? icoPause : icoPlay;
+  if (on) $('#bigPlay').classList.add('gone');
+}
+function setFree(on) {
+  state.free = on;
+  $('#camBtn').setAttribute('aria-pressed', String(!on));
+}
+function toggleDrawer(id, force) {
+  const el = $('#' + id), open = force ?? !el.classList.contains('open');
+  ['deeper', 'whatif'].forEach(d => { $('#' + d).classList.toggle('open', d === id ? open : false); $('#' + d + 'Btn').setAttribute('aria-pressed', String(d === id && open)); });
+  if (id === 'deeper' && open) renderDeep(chapterAt(state.t));
+}
+function paintSwitches() {
+  document.querySelectorAll('[data-sw]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(String(state.s[seg.dataset.sw]) === b.dataset.v))));
+}
+function setSwitch(k, v) {
+  state.s[k] = Number(v);
+  paintSwitches();
+  rebuild(true);
+}
+const cycle = k => {
+  const opts = k === 'write' ? [1, 3, 4] : [0, 1];
+  setSwitch(k, opts[(opts.indexOf(state.s[k]) + 1) % opts.length]);
+};
+
+$('#bigPlay').addEventListener('click', () => { ensureAudio(); play(true); });
+$('#play').addEventListener('click', () => { ensureAudio(); play(!state.playing); });
+$('#prev').addEventListener('click', () => jump(chapterAt(state.t) - (state.t - script.st[chapterAt(state.t)] > 1 ? 0 : 1)));
+$('#next').addEventListener('click', () => jump(chapterAt(state.t) + 1));
+$('#speed').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.speed = Number(b.dataset.v);
+  $('#speed').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+});
+$('#whatifBtn').addEventListener('click', () => toggleDrawer('whatif'));
+$('#deeperBtn').addEventListener('click', () => toggleDrawer('deeper'));
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => toggleDrawer(b.dataset.close, false)));
+document.querySelectorAll('[data-sw]').forEach(seg => seg.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setSwitch(seg.dataset.sw, b.dataset.v); }));
+const setLabels = on => { state.labels = on; ov.classList.toggle('hidelbl', !on); $('#lblBtn').setAttribute('aria-pressed', String(on)); };
+$('#lblBtn').addEventListener('click', () => setLabels(!state.labels));
+$('#sndBtn').addEventListener('click', () => setSound(!state.sound));
+$('#camBtn').addEventListener('click', () => setFree(!state.free));
+$('#sideBtn').addEventListener('click', () => { state.side = !state.side; $('.film').classList.toggle('noside', !state.side); $('#sideBtn').setAttribute('aria-pressed', String(state.side)); resize(); });
+const tabs = [['#tabEv', '#paneEv'], ['#tabWire', '#paneWire']];
+tabs.forEach(([tb, pn]) => $(tb).addEventListener('click', () => tabs.forEach(([t2, p2]) => { $(t2).setAttribute('aria-selected', String(t2 === tb)); $(p2).hidden = p2 !== pn; })));
+$('#wire').addEventListener('click', e => { const li = e.target.closest('li'); if (li) li.classList.toggle('open'); });
+let typeTimer = 0;
+const contentEl = $('#content');
+contentEl.value = state.content;
+contentEl.addEventListener('input', () => {
+  clearTimeout(typeTimer);
+  typeTimer = setTimeout(() => {
+    state.content = contentEl.value.trim() || ' ';
+    rebuild(true);
+    if (state.t > script.st[2]) setT(script.st[2] + 1.0);
+    play(true);
+  }, 450);
+});
+$('#newKey').addEventListener('click', regenKey);
+$('#copyEv').addEventListener('click', async e => {
+  const b = e.currentTarget;
+  try { await navigator.clipboard.writeText(JSON.stringify(world.note, null, 2)); b.textContent = 'Copied'; }
+  catch (err) { b.textContent = 'Copy failed'; }
+  setTimeout(() => { b.textContent = 'Copy event JSON'; }, 1600);
+});
+
+// rail scrub
+const railT = e => { const r = rail.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width) * script.total; };
+let scrubbing = false, wasPlaying = false;
+rail.addEventListener('pointerdown', e => { scrubbing = true; wasPlaying = state.playing; state.playing = false; rail.setPointerCapture(e.pointerId); setT(railT(e)); $('#bigPlay').classList.add('gone'); });
+rail.addEventListener('pointermove', e => {
+  const t = railT(e), i = chapterAt(t), r = rail.getBoundingClientRect();
+  tip.textContent = `${String(i).padStart(2, '0')} ${CH[i].title}`;
+  tip.style.left = clamp(e.clientX - r.left, 70, r.width - 70) + 'px';
+  if (scrubbing) setT(t);
+});
+rail.addEventListener('pointerup', () => { scrubbing = false; if (wasPlaying) play(true); });
+rail.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.stopPropagation(); setT(state.t + (e.key === 'ArrowLeft' ? -2 : 2)); } });
+
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { toggleDrawer('deeper', false); toggleDrawer('whatif', false); return; }
+  if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === ' ') { e.preventDefault(); ensureAudio(); play(!state.playing); }
+  else if (k === '[') jump(chapterAt(state.t) - 1);
+  else if (k === ']') jump(chapterAt(state.t) + 1);
+  else if (k === 'ArrowLeft') setT(state.t - 2);
+  else if (k === 'ArrowRight') setT(state.t + 2);
+  else if (k === '1') cycle('write');
+  else if (k === '2') cycle('block');
+  else if (k === '3') cycle('tamper');
+  else if (k === '4') cycle('down');
+  else if (k === 'N' && e.shiftKey) setLabels(!state.labels);
+  else if (k === 'm' || k === 'M') setSound(!state.sound);
+  else if (k === 'c' || k === 'C') setFree(!state.free);
+  else if (k === 'r' || k === 'R') setFree(false);
+  else if (k === 'd' || k === 'D') toggleDrawer('deeper');
+  else if (k === 'Escape') { toggleDrawer('deeper', false); }
+});
+
+/* ---------- sound ---------- */
+let actx = null;
+function ensureAudio() {
+  if (actx) return;
+  try { actx = new AudioContext(); } catch (err) { actx = null; }
+}
+function setSound(on) {
+  ensureAudio();
+  state.sound = on && !!actx;
+  if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  $('#sndBtn').setAttribute('aria-pressed', String(state.sound));
+}
+const PITCH = { [COL.ev]: 660, [COL.ok]: 880, [COL.no]: 220, [COL.req]: 520, [COL.eose]: 440, [COL.list]: 740, [COL.bad]: 300, [COL.reply]: 990 };
+function ping(c) {
+  if (!state.sound || !actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(), n = actx.currentTime;
+  o.type = 'sine'; o.frequency.setValueAtTime(PITCH[c] || 600, n); o.frequency.exponentialRampToValueAtTime((PITCH[c] || 600) * 1.5, n + .12);
+  g.gain.setValueAtTime(0.0001, n); g.gain.exponentialRampToValueAtTime(.08, n + .01); g.gain.exponentialRampToValueAtTime(.0001, n + .35);
+  o.connect(g).connect(actx.destination); o.start(n); o.stop(n + .4);
+}
+
+/* ---------- sizing and loop ---------- */
+const wide = matchMedia('(min-width: 901px)');
+function resize() {
+  const W = stage.clientWidth, H = stage.clientHeight;
+  renderer.setSize(W, H, false);
+  composer.setSize(W, H);
+  bloom.resolution.set(W / 2, H / 2);
+  camera.aspect = W / H;
+  updateOffset();
+}
+let distK = 1;
+function updateOffset() {
+  const W = stage.clientWidth, H = stage.clientHeight, sr = stage.getBoundingClientRect();
+  const sideW = wide.matches && state.side ? 392 : 0;
+  const top = $('.chap').getBoundingClientRect().bottom - sr.top;
+  const bot = $('#caption').getBoundingClientRect().top - sr.top;
+  const offY = clamp(H / 2 - (top + bot) / 2, -80, 220);
+  camera.setViewOffset(W, H, sideW / 2, offY, W, H);
+  camera.updateProjectionMatrix();
+  distK = Math.pow(Math.max(1, 1.16 / ((W / H) * (W - sideW) / W)), .85);
+}
+new ResizeObserver(resize).observe(stage);
+
+let visible = true;
+new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(stage);
+let lastNow = performance.now();
+function frame(now) {
+  const dt = Math.min(.1, (now - lastNow) / 1000);
+  lastNow = now;
+  const clk = now / 1000;
+  if (state.playing) {
+    const t0 = state.t;
+    state.t = Math.min(script.total, state.t + dt * state.speed);
+    if (state.sound) script.P.forEach(p => { const a = p.t0 + p.dur * (p.fail ? .55 : 1); if (a > t0 && a <= state.t) ping(p.c); });
+    if (state.t >= script.total) play(false);
+  }
+  if (visible) {
+    const t = state.t;
+    if (!state.free) {
+      const c = camAt(t);
+      if (distK > 1.001) c.p.sub(c.l).multiplyScalar(distK).add(c.l);
+      camera.position.copy(c.p); camera.lookAt(c.l); controls.target.copy(c.l);
+    } else controls.update();
+    dust.rotation.y = clk * .01;
+    stageObjects(t, clk);
+    netObjects(t, clk);
+    overlays(t);
+    updateUI(t);
+    composer.render();
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- start ---------- */
+$('#timings').innerHTML = [['Make a random key', TIMING.key], ['Public key from private key', TIMING.pub], ['SHA-256 of the event', TIMING.hash], ['Schnorr sign', TIMING.sign], ['Schnorr verify', TIMING.verify]].map(([k, v]) => `<li>${k}: <b>${fmtMs(v)}</b></li>`).join('');
+paintSwitches();
+rebuild(false);
+resize();
+document.fonts.ready.then(() => rebuild(true));
+requestAnimationFrame(frame);
+if (location.hash === '#autoplay' && !REDUCED) play(true);
+window.__film = { state, get script() { return script; }, setT, play, get world() { return world; } };
+</script>
+</body>
+</html>
